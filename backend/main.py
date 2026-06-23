@@ -7,13 +7,13 @@ All configuration is read from environment variables — no secrets in code.
 import os
 from dotenv import load_dotenv
 
-# Load .env file if present (safe: no-op when file is missing)
 load_dotenv()
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from typing import Optional
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
@@ -21,18 +21,13 @@ from agent_adk import AgentOrchestrator
 from mcp_server import mcp, get_scenarios
 
 # ── Configuration from environment ───────────────────────────────────────────
-# Comma-separated list of allowed CORS origins.
-# Default: Vite dev + preview ports. Override in .env for production.
 _raw_origins = os.getenv(
     "ALLOWED_ORIGINS",
     "http://localhost:5173,http://localhost:4173,http://127.0.0.1:5173,http://127.0.0.1:4173",
 )
 ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
-# Maximum accepted upload body size in bytes (default 10 MB).
 MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
-
-# Rate limit: requests per minute per IP (default 60).
 RATE_LIMIT: str = os.getenv("RATE_LIMIT_PER_MIN", "60") + "/minute"
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
@@ -41,26 +36,23 @@ limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
 # ── App factory ───────────────────────────────────────────────────────────────
 app = FastAPI(
     title="AI Agent Backplane & API Server",
-    # Disable automatic OpenAPI schema exposure in production-like settings
-    # (can be re-enabled by setting ENABLE_DOCS=true)
     docs_url="/docs" if os.getenv("ENABLE_DOCS", "true").lower() == "true" else None,
     redoc_url=None,
 )
 
-# Register slowapi's rate-limit-exceeded handler
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# ── CORS (restricted to known origins) ───────────────────────────────────────
+# ── CORS ──────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
-    allow_credentials=False,       # no cookies / credentials needed
+    allow_credentials=False,
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],
 )
 
-# ── Security-headers middleware ───────────────────────────────────────────────
+# ── Security headers ──────────────────────────────────────────────────────────
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -77,10 +69,9 @@ async def add_security_headers(request: Request, call_next):
     )
     return response
 
-# ── Global unhandled-exception handler (never leak stack traces) ──────────────
+# ── Global error handler ──────────────────────────────────────────────────────
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    # Log the real error server-side only
     print(f"[ERROR] Unhandled exception on {request.url.path}: {exc!r}")
     return JSONResponse(
         status_code=500,
@@ -90,37 +81,179 @@ async def generic_exception_handler(request: Request, exc: Exception):
 # ── Agent Orchestrator ────────────────────────────────────────────────────────
 orchestrator = AgentOrchestrator()
 
-# ── Pydantic schemas with field-level validation ──────────────────────────────
+# ── Pydantic schemas ──────────────────────────────────────────────────────────
+
 class FilterRequest(BaseModel):
+    """Filter for historical aggregation queries."""
     filters: dict = {}
 
+class CompareRequest(BaseModel):
+    """
+    Structured Compare X by Y request.
+    
+    Example:
+        { "metrics": ["Avg Yield", "Methane Emissions"], "dimension": "Climate Type" }
+        { "metrics": ["Profit Margin"], "dimension": "Scenario Group", "filters": {"AWD Adoption": "With AWD"} }
+    """
+    metrics: list[str] = Field(
+        default=[],
+        description=(
+            "List of column names to compare. Leave empty to use default metrics. "
+            "Valid values: Avg Yield, Methane Emissions, Emission Intensity, Profit Margin, "
+            "Net Income, Production Cost, Straw Value, Water Usage, Fertilizer Usage, "
+            "Pesticide Usage, Salinity Exposure, Max Flood Continuous, Flood Stress, "
+            "Drought Stress, Salinity Stress, Biodiversity, Resilient Varieties, "
+            "Water Reliability, Labor Intensity."
+        ),
+    )
+    dimension: str = Field(
+        description=(
+            "DataFrame column to group by. "
+            "Valid values: Climate Type, Season Type, Scenario Group, Scenario Name, "
+            "AWD Adoption, Resource Scenario."
+        ),
+    )
+    filters: dict = Field(
+        default={},
+        description="Optional pre-filters, e.g. {'AWD Adoption': 'With AWD'}.",
+    )
+
 class SimulationRequest(BaseModel):
-    awd_adoption: str
-    fertilizer_usage: float = Field(ge=50.0, le=250.0)
-    pesticide_usage: float  = Field(ge=0.5,  le=15.0)
-    water_usage: float      = Field(ge=100.0, le=1500.0)
-    salinity_exposure: float = Field(ge=0.0,  le=0.1)
+    """
+    Input parameters for a single-scenario agricultural simulation.
+    Ranges are agronomically validated.
+    """
+    awd_adoption: str = Field(
+        description="AWD practice. One of: 'With AWD', 'Without AWD'.",
+    )
+    fertilizer_usage: float = Field(
+        ge=50.0,  le=250.0,
+        description="Fertilizer applied (kg/ha). Range: 50–250.",
+    )
+    pesticide_usage: float = Field(
+        ge=0.5,   le=15.0,
+        description="Pesticide applied (kg/ha). Range: 0.5–15.",
+    )
+    water_usage: float = Field(
+        ge=100.0, le=1500.0,
+        description="Irrigation water applied (m³/ha). Range: 100–1500.",
+    )
+    salinity_exposure: float = Field(
+        ge=0.0,   le=0.1,
+        description="Salinity exposure level (ppt, 0–0.1).",
+    )
 
 class OptimizationRequest(BaseModel):
-    target_methane: float   = Field(ge=50.0, le=2000.0)
-    pesticide_usage: float  = Field(default=5.0, ge=0.5, le=15.0)
-    salinity_exposure: float = Field(default=0.01, ge=0.0, le=0.1)
+    """
+    Parameters for full-grid optimization (all AWD × fertilizer × water combinations).
+    Pesticide and salinity are held fixed as constraints.
+    """
+    target_methane: float = Field(
+        ge=50.0, le=2000.0,
+        description="Maximum allowed Methane Emissions (kg/ha).",
+    )
+    pesticide_usage: float = Field(
+        default=5.0, ge=0.5, le=15.0,
+        description="Fixed pesticide level (kg/ha) used as a constraint.",
+    )
+    salinity_exposure: float = Field(
+        default=0.01, ge=0.0, le=0.1,
+        description="Fixed salinity exposure (ppt) used as a constraint.",
+    )
+
+class ResourceOptimizationRequest(BaseModel):
+    """
+    Targeted resource optimization: search over only the listed resources,
+    hold everything else fixed.
+    
+    Example:
+        { "resources": ["water", "fertilizer"], "target_methane": 300 }
+        { "resources": ["awd", "water"], "fixed_inputs": {"fertilizer_usage": 120} }
+    """
+    resources: list[str] = Field(
+        description=(
+            "Resources to optimize. Valid values: 'water', 'fertilizer', "
+            "'pesticide', 'salinity', 'awd'."
+        ),
+    )
+    fixed_inputs: dict = Field(
+        default={},
+        description=(
+            "Fixed values for non-optimized inputs. Keys: awd_adoption, "
+            "fertilizer_usage, water_usage, pesticide_usage, salinity_exposure."
+        ),
+    )
+    target_methane: float = Field(
+        default=500.0, ge=50.0, le=2000.0,
+        description="Methane ceiling used in scoring (kg/ha). Default: 500 (lenient).",
+    )
 
 class QueryRequest(BaseModel):
+    """Free-text natural-language query routed through the AgentOrchestrator."""
     query: str = Field(min_length=1, max_length=1000)
     context: dict = {}
 
 class UploadRequest(BaseModel):
+    """Raw CSV content as a UTF-8 string for cleaning and ingestion."""
     file_content: str = Field(min_length=1)
 
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
 def _check_upload_size(content: str) -> None:
-    """Reject payloads exceeding the configured size limit."""
     if len(content.encode("utf-8")) > MAX_UPLOAD_BYTES:
         raise HTTPException(
             status_code=413,
             detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
         )
+
+_VALID_DIMENSIONS = {
+    "Climate Type", "Season Type", "Scenario Group",
+    "Scenario Name", "AWD Adoption", "Resource Scenario",
+}
+
+_VALID_METRICS = {
+    "Avg Yield", "Methane Emissions", "Emission Intensity",
+    "Profit Margin", "Net Income", "Production Cost", "Straw Value",
+    "Water Usage", "Fertilizer Usage", "Pesticide Usage", "Salinity Exposure",
+    "Max Flood Continuous", "Flood Stress", "Drought Stress", "Salinity Stress",
+    "Biodiversity", "Resilient Varieties", "Water Reliability", "Labor Intensity",
+}
+
+_VALID_RESOURCES = {"water", "fertilizer", "pesticide", "salinity", "awd"}
+
+_VALID_AWD = {"With AWD", "Without AWD"}
+
+def _validate_dimension(dimension: str) -> None:
+    if dimension not in _VALID_DIMENSIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid dimension '{dimension}'. Valid options: {sorted(_VALID_DIMENSIONS)}.",
+        )
+
+def _validate_metrics(metrics: list[str]) -> None:
+    invalid = [m for m in metrics if m not in _VALID_METRICS]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown metric(s): {invalid}. Valid options: {sorted(_VALID_METRICS)}.",
+        )
+
+def _validate_resources(resources: list[str]) -> None:
+    invalid = [r for r in resources if r not in _VALID_RESOURCES]
+    if invalid:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown resource(s): {invalid}. Valid options: {sorted(_VALID_RESOURCES)}.",
+        )
+
+def _validate_awd(awd: str) -> None:
+    if awd not in _VALID_AWD:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid awd_adoption '{awd}'. Must be one of: {sorted(_VALID_AWD)}.",
+        )
+
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -128,78 +261,199 @@ def _check_upload_size(content: str) -> None:
 @app.get("/api/scenarios")
 @limiter.limit(RATE_LIMIT)
 def api_get_scenarios(request: Request):
+    """
+    Return all distinct filter options (scenario groups, season types,
+    climate types, AWD options, resource scenarios, scenario names).
+    """
     try:
         return get_scenarios()
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Failed to retrieve scenarios.")
 
-# 2. Aggregations with filters
+
+# 2. Aggregation with filters
 @app.post("/api/metrics")
 @limiter.limit(RATE_LIMIT)
 def api_get_metrics(request: Request, req: FilterRequest):
+    """
+    Return aggregated statistics for all metrics, optionally pre-filtered.
+    
+    Returns averages for: Avg Yield, Methane Emissions, Emission Intensity,
+    Profit Margin, Net Income, Production Cost, Straw Value, Water Usage,
+    Fertilizer Usage, Pesticide Usage, Salinity Exposure, Max Flood Continuous,
+    Flood Stress, Drought Stress, Salinity Stress, Biodiversity,
+    Resilient Varieties, Water Reliability, Labor Intensity.
+    """
     try:
         result = orchestrator.process_query("aggregate", context={"filters": req.filters})
         return result["result"]
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Failed to compute metrics.")
 
-# 3. Simulate inputs
+
+# 3. Compare X by Y (structured)
+@app.post("/api/compare")
+@limiter.limit(RATE_LIMIT)
+def api_compare(request: Request, req: CompareRequest):
+    """
+    Compare one or more metrics grouped by a dimension.
+    
+    Example request body:
+    ```json
+    {
+      "metrics": ["Avg Yield", "Methane Emissions", "Water Reliability"],
+      "dimension": "Climate Type",
+      "filters": {}
+    }
+    ```
+    Leave `metrics` empty to use the default metric set.
+    """
+    _validate_dimension(req.dimension)
+    if req.metrics:
+        _validate_metrics(req.metrics)
+
+    try:
+        query = f"Compare {' and '.join(req.metrics) if req.metrics else 'all'} by {req.dimension}"
+        result = orchestrator.process_query(
+            query,
+            context={"filters": req.filters},
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Comparison failed.")
+
+
+# 4. Simulate
 @app.post("/api/simulate")
 @limiter.limit(RATE_LIMIT)
 def api_run_simulation(request: Request, req: SimulationRequest):
+    """
+    Run a single-scenario simulation with explicit agronomic inputs.
+    
+    Returns predictions for all output indicators:
+    Avg Yield, Methane Emissions, Emission Intensity, Profit Margin,
+    Net Income, Production Cost, Straw Value, Water Reliability,
+    Biodiversity, Resilient Varieties, Labor Intensity,
+    Flood Stress, Drought Stress, Salinity Stress.
+    """
+    _validate_awd(req.awd_adoption)
     try:
-        result = orchestrator.process_query("simulate", context={
-            "awd_adoption": req.awd_adoption,
-            "fertilizer_usage": req.fertilizer_usage,
-            "pesticide_usage": req.pesticide_usage,
-            "water_usage": req.water_usage,
-            "salinity_exposure": req.salinity_exposure,
-        })
+        result = orchestrator.process_query(
+            "simulate",
+            context={
+                "awd_adoption":      req.awd_adoption,
+                "fertilizer_usage":  req.fertilizer_usage,
+                "pesticide_usage":   req.pesticide_usage,
+                "water_usage":       req.water_usage,
+                "salinity_exposure": req.salinity_exposure,
+            },
+        )
         return result["result"]
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=500, detail="Simulation failed.")
 
-# 4. Optimize inputs
+
+# 5. Full-grid optimization (methane ceiling)
 @app.post("/api/optimize")
 @limiter.limit(RATE_LIMIT)
 def api_run_optimization(request: Request, req: OptimizationRequest):
+    """
+    Grid-search over AWD × fertilizer × water to maximize
+    (Avg Yield × 2 + Profit Margin) while keeping Methane Emissions
+    below `target_methane`. Pesticide and salinity are held fixed.
+    """
     try:
-        result = orchestrator.process_query("optimize", context={
-            "target_methane": req.target_methane,
-            "pesticide_usage": req.pesticide_usage,
-            "salinity_exposure": req.salinity_exposure,
-        })
+        result = orchestrator.process_query(
+            f"optimize methane {req.target_methane}",
+            context={
+                "target_methane":    req.target_methane,
+                "pesticide_usage":   req.pesticide_usage,
+                "salinity_exposure": req.salinity_exposure,
+            },
+        )
         return result["result"]
-    except Exception as e:
+    except HTTPException:
+        raise
+    except Exception:
         raise HTTPException(status_code=500, detail="Optimization failed.")
 
-# 5. Natural-language agent query
+
+# 6. Targeted resource optimization
+@app.post("/api/optimize/resource")
+@limiter.limit(RATE_LIMIT)
+def api_run_resource_optimization(request: Request, req: ResourceOptimizationRequest):
+    """
+    Optimize only the listed resources; hold everything else fixed.
+    
+    Example — find the best water + fertilizer combination while keeping
+    AWD fixed at 'With AWD' and pesticide at 10 kg/ha:
+    ```json
+    {
+      "resources": ["water", "fertilizer"],
+      "fixed_inputs": { "awd_adoption": "With AWD", "pesticide_usage": 10.0 },
+      "target_methane": 300
+    }
+    ```
+    """
+    _validate_resources(req.resources)
+    try:
+        result = orchestrator.model_agent.execute(
+            "optimize_resource",
+            resources=req.resources,
+            fixed_inputs=req.fixed_inputs,
+            target_methane=req.target_methane,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Resource optimization failed.")
+
+
+# 7. Natural-language agent query
 @app.post("/api/query")
 @limiter.limit(RATE_LIMIT)
 def api_process_agent_query(request: Request, req: QueryRequest):
+    """
+    Route any free-text query through the AgentOrchestrator.
+    
+    Supports:
+    - "Compare yield and water reliability by climate"
+    - "Simulate with AWD fertilizer 120 water 750"
+    - "Optimize inputs for methane below 200"
+    - "Give me a summary of BAU scenario"
+    - "Clean and standardize my CSV"
+    """
     try:
         return orchestrator.process_query(req.query, context=req.context)
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="Agent query failed.")
 
-# 6. Raw CSV ingestion & cleaning (string body)
+
+# 8. CSV ingestion — string body
 @app.post("/api/upload")
-@limiter.limit("20/minute")   # stricter limit for upload endpoint
+@limiter.limit("20/minute")
 def api_upload_csv(request: Request, req: UploadRequest):
+    """Accept raw CSV text, clean and standardize it, return the result."""
     _check_upload_size(req.file_content)
     try:
         result = orchestrator.process_query("clean", context={"file_content": req.file_content})
         return result["result"]
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=500, detail="CSV processing failed.")
 
-# 6b. Raw CSV ingestion via multipart file upload
+
+# 9. CSV ingestion — multipart file upload
 @app.post("/api/upload_file")
 @limiter.limit("20/minute")
 async def api_upload_csv_file(request: Request, file: UploadFile = File(...)):
-    # Validate MIME type
+    """Accept a CSV file via multipart upload, clean and standardize it."""
     allowed_types = {"text/csv", "application/csv", "text/plain"}
     if file.content_type not in allowed_types:
         raise HTTPException(
@@ -216,7 +470,6 @@ async def api_upload_csv_file(request: Request, file: UploadFile = File(...)):
             status_code=413,
             detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
         )
-
     try:
         file_content = content_bytes.decode("utf-8")
     except UnicodeDecodeError:
@@ -228,6 +481,7 @@ async def api_upload_csv_file(request: Request, file: UploadFile = File(...)):
     except Exception:
         raise HTTPException(status_code=500, detail="CSV processing failed.")
 
+
 # ── MCP SSE mount ─────────────────────────────────────────────────────────────
 try:
     sse_app = mcp.sse_app()
@@ -235,6 +489,7 @@ try:
     print("Mounted MCP SSE App on /mcp")
 except Exception as e:
     print(f"Could not mount MCP SSE app: {e}")
+
 
 if __name__ == "__main__":
     import uvicorn
