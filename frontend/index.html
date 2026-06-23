@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!--
+      Content-Security-Policy meta tag:
+      - script-src 'self' 'unsafe-inline': allows Vite's module scripts during dev.
+      - connect-src 'self' http://localhost:8000: restricts XHR/fetch to same origin + local API.
+      - object-src 'none': blocks Flash / plugins.
+      - base-uri 'self': prevents base-tag injection attacks.
+      - form-action 'self': prevents cross-origin form submissions.
+    -->
+  <meta http-equiv="Content-Security-Policy" content="
+        default-src 'self';
+        script-src 'self' 'unsafe-inline';
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+        font-src 'self' https://fonts.gstatic.com;
+        connect-src 'self' http://localhost:8000 http://127.0.0.1:8000;
+        img-src 'self' data:;
+        object-src 'none';
+        base-uri 'self';
+        form-action 'self';
+      " />
+  <meta http-equiv="X-Content-Type-Options" content="nosniff" />
+  <meta http-equiv="X-Frame-Options" content="DENY" />
+  <title>AI-Agents Agricultural Dashboard</title>
+</head>
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>
