@@ -73,7 +73,10 @@ AGG_NUMERIC_COLS = [
 # Mapping from AGG_NUMERIC_COLS → key name in the returned summary dict
 # (snake_case prefixed with "avg_")
 def _agg_key(col: str) -> str:
-    return "avg_" + col.lower().replace(" ", "_")
+    normalized = col.lower().replace(" ", "_")
+    if normalized.startswith("avg_"):
+        return normalized
+    return f"avg_{normalized}"
 
 
 # ── Categorical string columns to strip on load ───────────────────────────────
