@@ -190,7 +190,7 @@ export default function App() {
   const [optTargetMethane, setOptTargetMethane] = useState<number | ''>(200);
   const [optResults, setOptResults] = useState<OptimizationResult | null>(null);
   const [loadingOpt, setLoadingOpt] = useState(false);
-
+  const [optError, setOptError] = useState<string | null>(null);
   // Chat/Query Box state
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
@@ -263,22 +263,65 @@ export default function App() {
     }
   };
 
+  // const runOptimization = async () => {
+  //   setLoadingOpt(true);
+  //   try {
+  //     const res = await fetch(`${API_BASE}/optimize`, {
+  //       method: 'POST',
+  //       headers: { 'Content-Type': 'application/json' },
+  //       body: JSON.stringify({
+  //         target_methane: optTargetMethane === '' ? 200.0 : optTargetMethane,
+  //         pesticide_usage: simInputs.pesticide_usage,
+  //         salinity_exposure: simInputs.salinity_exposure
+  //       })
+  //     });
+  //     const data = await res.json();
+  //     setOptResults(data);
+  //   } catch (e) {
+  //     console.error("Error running optimization", e);
+  //   } finally {
+  //     setLoadingOpt(false);
+  //   }
+  // };
   const runOptimization = async () => {
     setLoadingOpt(true);
+    setOptError(null);
+    setOptResults(null);
+
     try {
       const res = await fetch(`${API_BASE}/optimize`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          target_methane: optTargetMethane === '' ? 200.0 : optTargetMethane,
+          target_methane: optTargetMethane === '' ? null : optTargetMethane,
           pesticide_usage: simInputs.pesticide_usage,
-          salinity_exposure: simInputs.salinity_exposure
-        })
+          salinity_exposure: simInputs.salinity_exposure,
+        }),
       });
+
       const data = await res.json();
+
+      // API trả 400 / 422 / 500 thì không set kết quả
+      if (!res.ok) {
+        setOptError(
+          data.message ||
+          data.detail?.message ||
+          (typeof data.detail === 'string' ? data.detail : null) ||
+          'Cannot be optimized.'
+        );
+        return;
+      }
+
+      // Phòng trường hợp backend trả HTTP 200 nhưng không có kết quả tối ưu
+      if (!data?.optimized_inputs || !data?.expected_outcomes) {
+        setOptError(data?.message || 'Cannot be optimized.');
+        return;
+      }
+
       setOptResults(data);
     } catch (e) {
-      console.error("Error running optimization", e);
+      console.error('Error running optimization', e);
+      setOptError('Cannot be optimized. Please Try Again.');
     } finally {
       setLoadingOpt(false);
     }
@@ -585,10 +628,31 @@ export default function App() {
                   onChange={(e) => {
                     const val = e.target.value;
                     setOptTargetMethane(val === '' ? '' : Number(val));
+                    setOptError(null);
                   }}
                 />
+                {optError && (
+                  <p
+                    role="alert"
+                    style={{
+                      marginTop: '0.4rem',
+                      marginBottom: 0,
+                      color: '#f87171',
+                      fontSize: '0.78rem',
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {optError}
+                  </p>
+                )}
               </div>
-              <button className="btn" style={{ alignSelf: 'flex-end' }} onClick={runOptimization} disabled={loadingOpt}>
+              <button
+                type="button"
+                className="btn"
+                style={{ alignSelf: 'flex-end' }}
+                onClick={runOptimization}
+                disabled={loadingOpt}
+              >
                 {loadingOpt ? <RefreshCw className="animate-spin" size={16} /> : 'Optimize'}
               </button>
             </div>

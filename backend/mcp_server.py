@@ -3,6 +3,8 @@ import pandas as pd
 from mcp.server.fastmcp import FastMCP
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
+import numpy as np
+import itertools
 
 # ── FastMCP Server ────────────────────────────────────────────────────────────
 mcp = FastMCP("AI Agents Agricultural Modeling")
@@ -231,63 +233,49 @@ def get_aggregated_metrics(filters: dict = None) -> dict:
 
 
 @mcp.tool()
-def run_agricultural_simulation(
-    awd_adoption: str,
-    fertilizer_usage: float,
-    pesticide_usage: float,
-    water_usage: float,
-    salinity_exposure: float,
-) -> dict:
+def run_agricultural_simulation(combos: list[tuple]) -> list[dict]:
     """
-    Predict all agricultural output indicators given a set of agronomic inputs.
-
-    Inputs:
-        awd_adoption       : 'With AWD' or 'Without AWD'
-        fertilizer_usage   : Fertilizer applied (kg/ha), e.g. 50–250
-        pesticide_usage    : Pesticide applied (kg/ha), e.g. 0.5–15
-        water_usage        : Irrigation water (m³/ha), e.g. 100–1500
-        salinity_exposure  : Salinity level (ppt), e.g. 0.0–0.1
-
-    Returns:
-        inputs      : Echo of the provided inputs
-        predictions : Dict of predicted values for every trained target:
-                      Avg Yield, Methane Emissions, Emission Intensity,
-                      Profit Margin, Net Income, Production Cost, Straw Value,
-                      Water Reliability, Biodiversity, Resilient Varieties,
-                      Labor Intensity, Flood Stress, Drought Stress, Salinity Stress
+    combos: list of (awd_str, fert, pest, water, sal)
     """
     global models, label_encoders
 
-    # Encode AWD
+    awd_strings = [c[0] for c in combos]
     try:
-        awd_encoded = label_encoders["AWD Adoption"].transform([awd_adoption])[0]
+        awd_encoded = label_encoders["AWD Adoption"].transform(awd_strings)
     except Exception:
-        # Fallback encoding if label not seen during training
-        awd_encoded = 1 if awd_adoption == "With AWD" else 0
+        awd_encoded = np.array([1 if a == "With AWD" else 0 for a in awd_strings])
 
-    X_input = pd.DataFrame([{
-        "AWD_encoded":      awd_encoded,
-        "Fertilizer Usage": fertilizer_usage,
-        "Pesticide Usage":  pesticide_usage,
-        "Water Usage":      water_usage,
-        "Salinity Exposure": salinity_exposure,
-    }])
-
-    predictions: dict = {}
-    for target, model in models.items():
-        predictions[target] = float(model.predict(X_input)[0])
-
-    return {
-        "inputs": {
-            "AWD Adoption":      awd_adoption,
-            "Fertilizer Usage":  fertilizer_usage,
-            "Pesticide Usage":   pesticide_usage,
-            "Water Usage":       water_usage,
-            "Salinity Exposure": salinity_exposure,
-        },
-        "predictions": predictions,
+    raw = {
+        "AWD_encoded":       awd_encoded,
+        "Fertilizer Usage":  [c[1] for c in combos],
+        "Pesticide Usage":   [c[2] for c in combos],
+        "Water Usage":       [c[3] for c in combos],
+        "Salinity Exposure": [c[4] for c in combos],
     }
 
+    # Reorder columns theo đúng thứ tự model đã train — tránh mọi lỗi thứ tự
+    first_model = next(iter(models.values()))
+    feature_order = list(first_model.feature_names_in_)
+    X = pd.DataFrame(raw)[feature_order]
+
+    results = {}
+    for target, model in models.items():
+        results[target] = model.predict(X).astype(float)
+
+    return pd.DataFrame(results).to_dict(orient="records")
+
+
+# ── Scoring vectorized ────────────────────────────────────────────────────────
+
+def _score_batch(preds: list[dict], target_methane: float) -> np.ndarray:
+    yields   = np.array([p["Avg Yield"]         for p in preds])
+    margins  = np.array([p["Profit Margin"]      for p in preds])
+    methanes = np.array([p["Methane Emissions"]  for p in preds])
+
+    scores  = yields * 2.0 + margins
+    overage = methanes - target_methane
+    scores -= np.maximum(overage, 0) * 10.0
+    return scores
 
 @mcp.tool()
 def clean_and_standardize_csv(file_content: str) -> dict:

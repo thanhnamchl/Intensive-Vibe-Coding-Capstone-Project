@@ -1,5 +1,9 @@
 import re
-from mcp_server import get_aggregated_metrics, run_agricultural_simulation, get_scenarios, data
+from mcp_server import get_aggregated_metrics, run_agricultural_simulation, get_scenarios, data,  _score_batch
+import itertools
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from enum import Enum
+import numpy as np
 
 # ── Canonical lookup tables (shared by Agent + Orchestrator) ──────────────────
 # Column names must exactly match the dataset headers.
@@ -305,112 +309,116 @@ class AggregationAgent(Agent):
 
 
 # ── ModelingAgent ─────────────────────────────────────────────────────────────
+class TaskType(Enum):
+    SIMULATE     = "simulate"
+    OPTIMIZE_RES = "optimize_resource"
+    OPTIMIZE     = "optimize"
+    UNKNOWN      = "unknown"
 
+def _classify(task: str) -> TaskType:
+    t = task.lower()
+    if "optimize_resource" in t:
+        return TaskType.OPTIMIZE_RES
+    if "optimize" in t:
+        return TaskType.OPTIMIZE
+    if any(kw in t for kw in ("simulate", "run", "predict")):
+        return TaskType.SIMULATE
+    return TaskType.UNKNOWN
 class ModelingAgent(Agent):
-    def __init__(self):
+    AWD_OPTIONS = ["With AWD", "Without AWD"]
+    FERT_GRID   = [50.0, 75.0, 100.0, 125.0, 150.0, 175.0, 200.0, 225.0, 250.0]
+    WATER_GRID  = [200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0, 1100.0, 1200.0]
+    PEST_GRID   = [1.0, 3.0, 5.0, 7.0, 10.0, 13.0, 15.0]
+    SAL_GRID    = [0.001, 0.005, 0.01, 0.02, 0.03, 0.05]
+
+    def __init__(self):                          # ← thêm lại
         super().__init__(
             name="Agricultural Yield & Emission Predictor",
             role="Predictive Modeling & Resource Optimizer",
             description=(
-                "Simulates crop outcomes across all indicators (yield, methane, emission intensity, "
-                "profit, water reliability, biodiversity, labor, stress indices) and optimizes "
+                "Simulates crop outcomes across all indicators and optimizes "
                 "water/fertilizer/pesticide/salinity/AWD inputs to meet user-defined targets."
             )
         )
 
-    def _score_sim(self, pred: dict, target_methane: float) -> float:
-        """Score = maximize yield + profit, penalize methane overage."""
-        score = pred.get("Avg Yield", 0) * 2.0 + pred.get("Profit Margin", 0)
-        if pred.get("Methane Emissions", 0) > target_methane:
-            score -= (pred["Methane Emissions"] - target_methane) * 10.0
-        return score
+    def _build_combos(self, resources: list, fixed: dict) -> list[tuple]:
+        awd  = self.AWD_OPTIONS if "awd"        in resources else [fixed.get("awd_adoption",     "With AWD")]
+        fert = self.FERT_GRID   if "fertilizer" in resources else [fixed.get("fertilizer_usage", 100.0)]
+        pest = self.PEST_GRID   if "pesticide"  in resources else [fixed.get("pesticide_usage",    5.0)]
+        water= self.WATER_GRID  if "water"      in resources else [fixed.get("water_usage",       600.0)]
+        sal  = self.SAL_GRID    if "salinity"   in resources else [fixed.get("salinity_exposure",  0.01)]
+        return list(itertools.product(awd, fert, pest, water, sal))
+
+    def _best_from_combos(self, combos: list[tuple], target_methane: float) -> tuple[dict, float]:
+        preds    = run_agricultural_simulation(combos)
+        scores   = _score_batch(preds, target_methane)
+        best_idx = int(np.argmax(scores))
+        best_combo = combos[best_idx]
+        return {
+            "inputs": {
+                "AWD Adoption":      best_combo[0],
+                "Fertilizer Usage":  best_combo[1],
+                "Water Usage":       best_combo[3],
+                "Pesticide Usage":   best_combo[2],
+                "Salinity Exposure": best_combo[4],
+            },
+            "predictions": preds[best_idx],
+        }, float(scores[best_idx])
 
     def execute(self, task: str, **kwargs) -> dict:
-        task_lower = task.lower()
+        match _classify(task):
 
-        # ── Simulation ────────────────────────────────────────────────────────
-        if "simulate" in task_lower or "run" in task_lower or "predict" in task_lower:
-            return run_agricultural_simulation(
-                awd_adoption      = kwargs.get("awd_adoption",      "With AWD"),
-                fertilizer_usage  = kwargs.get("fertilizer_usage",  100.0),
-                pesticide_usage   = kwargs.get("pesticide_usage",   5.0),
-                water_usage       = kwargs.get("water_usage",       600.0),
-                salinity_exposure = kwargs.get("salinity_exposure", 0.01),
-            )
+            case TaskType.SIMULATE:
+                combo = [(
+                    kwargs.get("awd_adoption",     "With AWD"),
+                    kwargs.get("fertilizer_usage", 100.0),
+                    kwargs.get("pesticide_usage",    5.0),   # index 2
+                    kwargs.get("water_usage",       600.0),  # index 3
+                    kwargs.get("salinity_exposure",  0.01),  # index 4
+                )]
+                preds = run_agricultural_simulation(combo)
+                return {
+                    "inputs": {
+                        "AWD Adoption":      combo[0][0],
+                        "Fertilizer Usage":  combo[0][1],
+                        "Pesticide Usage":   combo[0][2],
+                        "Water Usage":       combo[0][3],
+                        "Salinity Exposure": combo[0][4],
+                    },
+                    "predictions": preds[0],
+                }
 
-        # ── Resource-specific optimization ────────────────────────────────────
-        elif "optimize_resource" in task_lower:
-            resources      = kwargs.get("resources", [])
-            fixed          = kwargs.get("fixed_inputs", {})
-            target_methane = kwargs.get("target_methane", 500.0)
+            case TaskType.OPTIMIZE_RES:
+                resources      = kwargs.get("resources", [])
+                fixed          = kwargs.get("fixed_inputs", {})
+                target_methane = kwargs.get("target_methane", 500.0)
+                combos         = self._build_combos(resources, fixed)
+                best_sim, best_score = self._best_from_combos(combos, target_methane)
+                label = " + ".join(r.title() for r in resources) or "All Inputs"
+                return {
+                    "optimization_target": f"Optimal {label} (Methane ceiling: {target_methane} kg/ha)",
+                    "best_score":          best_score,
+                    "optimized_inputs":    best_sim["inputs"],
+                    "expected_outcomes":   best_sim["predictions"],
+                }
 
-            awd_options  = ["With AWD", "Without AWD"]
-            fert_grid    = [50.0, 75.0, 100.0, 125.0, 150.0, 175.0, 200.0, 225.0, 250.0]
-            water_grid   = [200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0, 1100.0, 1200.0]
-            pest_grid    = [1.0, 3.0, 5.0, 7.0, 10.0, 13.0, 15.0]
-            sal_grid     = [0.001, 0.005, 0.01, 0.02, 0.03, 0.05]
+            case TaskType.OPTIMIZE:
+                target_methane = kwargs.get("target_methane", 200.0)
+                fixed = {
+                    "pesticide_usage":   kwargs.get("pesticide_usage",   5.0),
+                    "salinity_exposure": kwargs.get("salinity_exposure", 0.01),
+                }
+                combos = self._build_combos(["awd", "fertilizer", "water"], fixed)
+                best_sim, best_score = self._best_from_combos(combos, target_methane)
+                return {
+                    "optimization_target": f"Maximize performance with Methane Emissions <= {target_methane}",
+                    "best_score":          best_score,
+                    "optimized_inputs":    best_sim["inputs"],
+                    "expected_outcomes":   best_sim["predictions"],
+                }
 
-            awd_search   = awd_options if "awd"        in resources else [fixed.get("awd_adoption",    "With AWD")]
-            fert_search  = fert_grid   if "fertilizer" in resources else [fixed.get("fertilizer_usage", 100.0)]
-            water_search = water_grid  if "water"      in resources else [fixed.get("water_usage",      600.0)]
-            pest_search  = pest_grid   if "pesticide"  in resources else [fixed.get("pesticide_usage",    5.0)]
-            sal_search   = sal_grid    if "salinity"   in resources else [fixed.get("salinity_exposure",  0.01)]
-
-            best_sim, best_score = None, -float("inf")
-            for awd_val in awd_search:
-                for fert_val in fert_search:
-                    for water_val in water_search:
-                        for pest_val in pest_search:
-                            for sal_val in sal_search:
-                                sim = run_agricultural_simulation(
-                                    awd_adoption=awd_val, fertilizer_usage=fert_val,
-                                    pesticide_usage=pest_val, water_usage=water_val,
-                                    salinity_exposure=sal_val,
-                                )
-                                sc = self._score_sim(sim["predictions"], target_methane)
-                                if sc > best_score:
-                                    best_score, best_sim = sc, sim
-
-            label = " + ".join(r.title() for r in resources) if resources else "All Inputs"
-            return {
-                "optimization_target": f"Optimal {label} (Methane ceiling: {target_methane} kg/ha)",
-                "best_score":          best_score,
-                "optimized_inputs":    best_sim["inputs"]      if best_sim else {},
-                "expected_outcomes":   best_sim["predictions"] if best_sim else {},
-            }
-
-        # ── Full methane-ceiling optimization ─────────────────────────────────
-        elif "optimize" in task_lower:
-            target_methane = kwargs.get("target_methane", 200.0)
-            pest_val       = kwargs.get("pesticide_usage",   5.0)
-            sal_val        = kwargs.get("salinity_exposure", 0.01)
-
-            fert_grid  = [50.0, 75.0, 100.0, 125.0, 150.0, 175.0, 200.0, 225.0, 250.0]
-            water_grid = [200.0, 300.0, 400.0, 500.0, 600.0, 700.0, 800.0, 900.0, 1000.0, 1100.0, 1200.0]
-
-            best_sim, best_score = None, -float("inf")
-            for awd_option in ["With AWD", "Without AWD"]:
-                for fert_val in fert_grid:
-                    for water_val in water_grid:
-                        sim = run_agricultural_simulation(
-                            awd_adoption=awd_option, fertilizer_usage=fert_val,
-                            pesticide_usage=pest_val, water_usage=water_val,
-                            salinity_exposure=sal_val,
-                        )
-                        sc = self._score_sim(sim["predictions"], target_methane)
-                        if sc > best_score:
-                            best_score, best_sim = sc, sim
-
-            return {
-                "optimization_target": f"Maximize performance with Methane Emissions <= {target_methane}",
-                "best_score":          best_score,
-                "optimized_inputs":    best_sim["inputs"]      if best_sim else {},
-                "expected_outcomes":   best_sim["predictions"] if best_sim else {},
-            }
-
-        return {"error": f"Task '{task}' not supported by {self.name}."}
-
-
+            case _:
+                return {"error": f"Task '{task}' not supported by {self.name}."}
 # ── AgentOrchestrator ─────────────────────────────────────────────────────────
 
 class AgentOrchestrator:

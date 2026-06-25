@@ -12,6 +12,7 @@ load_dotenv()
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field
 from typing import Optional
 from slowapi import Limiter, _rate_limit_exceeded_handler
@@ -77,7 +78,31 @@ async def generic_exception_handler(request: Request, exc: Exception):
         status_code=500,
         content={"detail": "An internal server error occurred. Please try again."},
     )
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request,
+    exc: RequestValidationError,
+):
+    optimization_paths = {
+        "/api/optimize",
+        "/api/optimize/resource",
+    }
 
+    if request.url.path in optimization_paths:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "message": "Cannot be optimized"
+            },
+        )
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": exc.errors(),
+        },
+    )
 # ── Agent Orchestrator ────────────────────────────────────────────────────────
 orchestrator = AgentOrchestrator()
 
@@ -353,14 +378,13 @@ def api_run_simulation(request: Request, req: SimulationRequest):
         return result["result"]
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         raise HTTPException(status_code=500, detail="Simulation failed.")
-
 
 # 5. Full-grid optimization (methane ceiling)
 @app.post("/api/optimize")
 @limiter.limit(RATE_LIMIT)
-def api_run_optimization(request: Request, req: OptimizationRequest):
+def api_optimize(request: Request, req: OptimizationRequest):
     """
     Grid-search over AWD × fertilizer × water to maximize
     (Avg Yield × 2 + Profit Margin) while keeping Methane Emissions
@@ -368,7 +392,7 @@ def api_run_optimization(request: Request, req: OptimizationRequest):
     """
     try:
         result = orchestrator.process_query(
-            f"optimize methane {req.target_methane}",
+            "optimize",
             context={
                 "target_methane":    req.target_methane,
                 "pesticide_usage":   req.pesticide_usage,
@@ -378,7 +402,7 @@ def api_run_optimization(request: Request, req: OptimizationRequest):
         return result["result"]
     except HTTPException:
         raise
-    except Exception:
+    except Exception as e:
         raise HTTPException(status_code=500, detail="Optimization failed.")
 
 
@@ -480,7 +504,6 @@ async def api_upload_csv_file(request: Request, file: UploadFile = File(...)):
         return result["result"]
     except Exception:
         raise HTTPException(status_code=500, detail="CSV processing failed.")
-
 
 # ── MCP SSE mount ─────────────────────────────────────────────────────────────
 try:
