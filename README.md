@@ -13,7 +13,6 @@ The system consists of three main components:
    - Exposes tools to query, filter, simulate, and clean data.
 2. **Multi-Agent System (`backend/agent_adk.py`)**:
    - Implements an Agent Development Kit (ADK) orchestrating:
-     - **Agronomist Data Cleaner (DataCleaningAgent)**: Standardizes CSV schema structures and handles quality audits.
      - **Agricultural Statistics Analyst (AggregationAgent)**: Groups and aggregates historical trends.
      - **Agricultural Yield & Emission Predictor (ModelingAgent)**: Performs scenario forecasts and inputs optimization.
      - **AgentOrchestrator**: Dynamically routes and resolves natural language queries.
@@ -97,4 +96,3 @@ The frontend is a React + Vite application.
    - *"Optimize inputs for methane below 180"*
    - *"Give me a summary of Business As Usual scenario"*
    - *"Simulate with AWD adoption With AWD and fertilizer 120 and water 750"*
-3. **Data Ingestion**: Click the **"Upload Custom CSV"** button to load a new dataset, standardizing it automatically through the `DataCleaningAgent`.
