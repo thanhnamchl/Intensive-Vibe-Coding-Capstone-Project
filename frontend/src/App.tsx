@@ -59,6 +59,9 @@ import {
   ResponsiveContainer,
   BarChart,
   Bar,
+  LineChart,
+  Line,
+  CartesianGrid,
   XAxis,
   YAxis,
   Tooltip,
@@ -191,6 +194,8 @@ export default function App() {
   const [optResults, setOptResults] = useState<OptimizationResult | null>(null);
   const [loadingOpt, setLoadingOpt] = useState(false);
   const [optError, setOptError] = useState<string | null>(null);
+  const [yearlyData, setYearlyData] = useState<any[]>([]);
+  const [loadingYearly, setLoadingYearly] = useState(false);
   // Chat/Query Box state
   const [chatInput, setChatInput] = useState('');
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([
@@ -204,10 +209,6 @@ export default function App() {
   const [loadingChat, setLoadingChat] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // File Upload state
-  const [loadingUpload, setLoadingUpload] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [cleaningResult, setCleaningResult] = useState<CleaningResult | null>(null);
 
 
   const fetchScenarios = async () => {
@@ -240,10 +241,45 @@ export default function App() {
     }
   };
 
+  const fetchYearlyData = async (currentFilters = filters) => {
+    setLoadingYearly(true);
+    try {
+      const activeFilters = Object.fromEntries(
+        Object.entries(currentFilters).filter(([, v]) => v !== '')
+      );
+      const res = await fetch(`${API_BASE}/compare`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          metrics: ["Avg Yield", "Methane Emissions"],
+          dimension: "Year",
+          filters: activeFilters
+        })
+      });
+      const data = await res.json();
+      if (data.result && data.result.compare_breakdown) {
+        const formatted = Object.entries(data.result.compare_breakdown).map(([year, vals]: any) => ({
+          year: year,
+          'Yield (t/ha)': vals['Avg Yield'],
+          'Methane (kg/ha)': vals['Methane Emissions']
+        })).sort((a, b) => Number(a.year) - Number(b.year));
+        setYearlyData(formatted);
+      } else {
+        setYearlyData([]);
+      }
+    } catch (e) {
+      console.error("Error loading yearly metrics", e);
+      setYearlyData([]);
+    } finally {
+      setLoadingYearly(false);
+    }
+  };
+
   const handleFilterChange = (col: string, val: string) => {
     const updated = { ...filters, [col]: val };
     setFilters(updated);
     fetchMetrics(updated);
+    fetchYearlyData(updated);
   };
 
   const runSimulation = async (inputs = simInputs) => {
@@ -376,80 +412,18 @@ export default function App() {
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    // Reset previous results
-    setCleaningResult(null);
-    setUploadError(null);
-
-    // ── Client-side security guards ──────────────────────────────────────────
-    // 1. File type validation: accept CSV only
-    const allowedTypes = ['text/csv', 'application/csv', 'text/plain'];
-    const hasValidMime = allowedTypes.includes(file.type);
-    const hasValidExt = file.name.toLowerCase().endsWith('.csv');
-    if (!hasValidMime && !hasValidExt) {
-      setUploadError('Invalid file type. Please upload a .csv file.');
-      // Reset the input so the same file can be re-selected after fixing
-      e.target.value = '';
-      return;
-    }
-
-    // 2. File size validation: reject files above the configured limit
-    if (file.size > MAX_UPLOAD_BYTES) {
-      const limitMB = (MAX_UPLOAD_BYTES / (1024 * 1024)).toFixed(0);
-      setUploadError(`File too large. Maximum allowed size is ${limitMB} MB.`);
-      e.target.value = '';
-      return;
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    setLoadingUpload(true);
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const text = event.target?.result as string;
-      try {
-        const res = await fetch(`${API_BASE}/upload`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ file_content: text })
-        });
-        if (!res.ok) {
-          let detail = 'Upload failed';
-          try {
-            const errData = await res.json();
-            detail = errData.detail || detail;
-          } catch { /* non-JSON error body */ }
-          throw new Error(detail);
-        }
-        const data = await res.json();
-        setCleaningResult(data);
-      } catch (err) {
-        console.error('Upload error', err);
-        setUploadError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setLoadingUpload(false);
-      }
-    };
-    reader.onerror = () => {
-      setUploadError('Failed to read the file. Please try again.');
-      setLoadingUpload(false);
-    };
-    reader.readAsText(file);
-  };
 
   // Auto-scroll chat to bottom on new message
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatHistory, loadingChat]);
 
-  // Ingestion metrics
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fetchScenarios();
     fetchMetrics();
     runSimulation();
+    fetchYearlyData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -818,92 +792,31 @@ export default function App() {
         </div>
       </div>
 
-      {/* CSV Ingestion, Standardization, & Quality Audit Panel */}
-      <section className="glass-panel">
-        <h2><Upload size={20} /> Data Cleaning, Standardization & Ingestion (DataCleaningAgent)</h2>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '2rem', marginTop: '1rem' }}>
-          <div>
-            <div className="upload-area" onClick={() => document.getElementById('csv-file-input')?.click()}>
-              <Upload size={32} style={{ color: 'var(--primary)', marginBottom: '0.5rem' }} />
-              <h3>Choose agricultural simulation CSV</h3>
-              <p>Standardize columns, conversions, and missing values report.</p>
-              <input
-                id="csv-file-input"
-                type="file"
-                accept=".csv"
-                style={{ display: 'none' }}
-                onChange={handleFileUpload}
-              />
+      {/* Yearly Trends Section */}
+      <section className="glass-panel" style={{ marginTop: '2rem' }}>
+        <h2><TrendingUp size={20} /> Yearly Performance Trends (Yield & Methane Emissions)</h2>
+        <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+          Visualizing the long-term trend of average rice yield and carbon emissions from 2026 to 2057.
+        </p>
+        <div style={{ height: 320, width: '100%' }}>
+          {yearlyData.length > 0 ? (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={yearlyData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <XAxis dataKey="year" stroke="#9ca3af" />
+                <YAxis yAxisId="left" orientation="left" stroke="#22c55e" label={{ value: 'Yield (t/ha)', angle: -90, position: 'insideLeft', fill: '#22c55e', offset: 0 }} />
+                <YAxis yAxisId="right" orientation="right" stroke="#ef4444" label={{ value: 'Methane (kg/ha)', angle: 90, position: 'insideRight', fill: '#ef4444', offset: 0 }} />
+                <Tooltip contentStyle={{ background: '#0b1510', border: '1px solid var(--panel-border)', borderRadius: '8px' }} />
+                <Legend />
+                <Line yAxisId="left" type="monotone" dataKey="Yield (t/ha)" stroke="#22c55e" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+                <Line yAxisId="right" type="monotone" dataKey="Methane (kg/ha)" stroke="#ef4444" strokeWidth={3} dot={{ r: 4 }} activeDot={{ r: 6 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%', color: 'var(--text-muted)' }}>
+              {loadingYearly ? 'Loading yearly trend data...' : 'No Data Available'}
             </div>
-            {loadingUpload && <p style={{ marginTop: '0.5rem', fontSize: '0.85rem' }}>Processing CSV file...</p>}
-            {uploadError && <p style={{ marginTop: '0.5rem', color: '#ef4444', fontSize: '0.85rem' }}>{uploadError}</p>}
-          </div>
-
-          <div>
-            {cleaningResult ? (
-              cleaningResult.status === 'error' ? (
-                // Backend returned a processing error — show it clearly
-                <div style={{
-                  padding: '1rem', borderRadius: '0.5rem',
-                  background: 'rgba(239,68,68,0.1)', border: '1px solid #ef4444'
-                }}>
-                  <h4 style={{ color: '#ef4444', marginBottom: '0.5rem' }}>⚠️ CSV Processing Error</h4>
-                  <p style={{ color: '#fca5a5', fontSize: '0.85rem' }}>
-                    {cleaningResult.message || 'An unknown error occurred while processing the CSV.'}
-                  </p>
-                </div>
-              ) : (
-                // Successful clean — render the audit report
-                <div style={{ fontSize: '0.85rem' }}>
-                  <h3 style={{ color: '#4ade80', marginBottom: '0.5rem' }}>✅ Ingestion & Audit Report</h3>
-                  <p>Records Ingested: <strong>{cleaningResult.records_processed ?? 'N/A'}</strong></p>
-                  {cleaningResult.converted_types && cleaningResult.converted_types.length > 0 && (
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.25rem' }}>
-                      Numeric columns standardised: {cleaningResult.converted_types.join(', ')}
-                    </p>
-                  )}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '0.75rem' }}>
-                    <div>
-                      <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Renamed Columns:</h4>
-                      {Object.keys(cleaningResult.renamed_columns ?? {}).length > 0 ? (
-                        <ul style={{ paddingLeft: '1.2rem' }}>
-                          {Object.entries(cleaningResult.renamed_columns ?? {}).map(([k, v]) => (
-                            <li key={k} style={{ marginBottom: '0.2rem' }}>
-                              <code>{k}</code> &rarr; <code>{v}</code>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : <p style={{ color: 'var(--text-muted)' }}>None — columns already standard ✓</p>}
-                    </div>
-                    <div>
-                      <h4 style={{ color: 'var(--text-muted)', marginBottom: '0.25rem' }}>Null Values per Column:</h4>
-                      {Object.keys(cleaningResult.missing_values ?? {}).length > 0 ? (
-                        <ul style={{ paddingLeft: '1.2rem' }}>
-                          {Object.entries(cleaningResult.missing_values ?? {}).map(([k, v]) => (
-                            <li key={k} style={{
-                              marginBottom: '0.2rem',
-                              color: v > 0 ? '#fca5a5' : 'inherit'
-                            }}>
-                              {k}: <strong>{v}</strong>
-                            </li>
-                          ))}
-                        </ul>
-                      ) : <p style={{ color: 'var(--text-muted)' }}>No null values detected ✓</p>}
-                    </div>
-                  </div>
-                </div>
-              )
-            ) : (
-              <div style={{
-                color: 'var(--text-muted)', display: 'flex', alignItems: 'center',
-                justifyContent: 'center', height: '100%',
-                border: '1px solid rgba(255,255,255,0.05)', borderRadius: '8px',
-                padding: '2rem', textAlign: 'center'
-              }}>
-                No active CSV files uploaded yet. Ingest a file to see quality reports.
-              </div>
-            )}
-          </div>
+          )}
         </div>
       </section>
     </div>

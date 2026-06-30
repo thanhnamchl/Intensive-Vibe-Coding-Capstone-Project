@@ -4,6 +4,7 @@ import itertools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
 import numpy as np
+import pandas as pd
 
 # ── Canonical lookup tables (shared by Agent + Orchestrator) ──────────────────
 # Column names must exactly match the dataset headers.
@@ -16,6 +17,7 @@ DIMENSION_MAP = {
     "scenario name":     "Scenario Name",
     "awd":               "AWD Adoption",
     "resource":          "Resource Scenario",
+    "year":              "Year",
 }
 
 METRIC_MAP = {
@@ -88,6 +90,12 @@ METRIC_LABELS = {
     "Resilient Varieties":    ("🌱", "%"),
     "Water Reliability":      ("💧", "%"),
     "Labor Intensity":        ("👷", "hours/ha"),
+}
+
+MONTH_MAP = {
+    "january": 1, "february": 2, "march": 3, "april": 4, "may": 5, "june": 6,
+    "july": 7, "august": 8, "september": 9, "october": 10, "november": 11, "december": 12,
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
 }
 
 # Keys returned by get_aggregated_metrics() → (display label, icon, unit)
@@ -166,6 +174,15 @@ def _resolve_metrics(raw: str) -> list[str]:
     return cols if cols else list(DEFAULT_METRICS)
 
 
+def _resolve_metric_single(raw: str) -> str | None:
+    """Map a raw metric string to a single DataFrame column name or None."""
+    raw = raw.strip().lower()
+    for key in sorted(METRIC_MAP, key=len, reverse=True):
+        if key in raw:
+            return METRIC_MAP[key]
+    return None
+
+
 def _fmt_val(val: float, fmt: str) -> str:
     """Format a numeric value with the given format spec."""
     try:
@@ -212,33 +229,6 @@ class Agent:
         raise NotImplementedError("Agents must implement execute method.")
 
 
-# ── DataCleaningAgent ─────────────────────────────────────────────────────────
-
-class DataCleaningAgent(Agent):
-    def __init__(self):
-        super().__init__(
-            name="Agronomist Data Cleaner",
-            role="Data Standardization & Quality Audit",
-            description="Audits raw CSV data, fixes column naming inconsistencies, handles null values, and converts types."
-        )
-
-    def execute(self, task: str, **kwargs) -> dict:
-        if "clean" in task.lower() or "standardize" in task.lower():
-            file_content = kwargs.get("file_content")
-            file_path    = kwargs.get("file_path")
-            if not file_content and file_path:
-                try:
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        file_content = f.read()
-                except Exception as e:
-                    return {"error": f"Failed to read file at {file_path}: {str(e)}"}
-            if not file_content:
-                return {"error": "Missing file_content or file_path parameter for cleaning."}
-            from mcp_server import clean_and_standardize_csv
-            return clean_and_standardize_csv(file_content)
-        return {"error": f"Task '{task}' not supported by {self.name}."}
-
-
 # ── AggregationAgent ──────────────────────────────────────────────────────────
 
 class AggregationAgent(Agent):
@@ -266,27 +256,46 @@ class AggregationAgent(Agent):
 
         # ── Structured Compare X by Y path ───────────────────────────────────
         if dimension:
+            temp_col = None
             if dimension not in data.columns:
-                summary["compare_error"] = f"Column '{dimension}' not found in dataset."
-                return summary
+                if dimension == "Year" and "datetime" in data.columns:
+                    data["Year"] = data["datetime"].dt.year.dropna().astype(int).astype(str)
+                    temp_col = "Year"
+                else:
+                    summary["compare_error"] = f"Column '{dimension}' not found in dataset."
+                    return summary
+
+            # Apply filters to the dataframe before grouping
+            filtered_data = data
+            for col, val in filters.items():
+                if col in filtered_data.columns and val:
+                    filtered_data = filtered_data[filtered_data[col] == val]
 
             # Use requested metrics; fall back to DEFAULT_METRICS; filter to existing cols only
             requested = metrics if metrics else list(DEFAULT_METRICS)
-            cols_to_group = [c for c in requested if c in data.columns]
+            cols_to_group = [c for c in requested if c in filtered_data.columns]
 
             if not cols_to_group:
                 summary["compare_error"] = "None of the requested metric columns exist in the dataset."
+                if temp_col:
+                    data.drop(columns=[temp_col], inplace=True)
                 return summary
 
-            breakdown = (
-                data.groupby(dimension)[cols_to_group]
-                .mean()
-                .round(3)
-                .to_dict(orient="index")
-            )
+            if filtered_data.empty:
+                breakdown = {}
+            else:
+                breakdown = (
+                    filtered_data.groupby(dimension)[cols_to_group]
+                    .mean()
+                    .round(3)
+                    .to_dict(orient="index")
+                )
             summary["compare_dimension"] = dimension
             summary["compare_metrics"]   = cols_to_group
             summary["compare_breakdown"] = breakdown
+
+            if temp_col:
+                data.drop(columns=[temp_col], inplace=True)
             return summary
 
         # ── Legacy keyword-based breakdown (backward-compatible) ─────────────
@@ -423,7 +432,6 @@ class ModelingAgent(Agent):
 
 class AgentOrchestrator:
     def __init__(self):
-        self.clean_agent = DataCleaningAgent()
         self.agg_agent   = AggregationAgent()
         self.model_agent = ModelingAgent()
 
@@ -539,13 +547,126 @@ class AgentOrchestrator:
                 "text":   self._format_compare_text(result),
             }
 
-        # ── 1. Cleaning & Ingestion ───────────────────────────────────────────
-        if "clean" in query_lower or "standardize" in query_lower or "upload" in query_lower:
-            return {
-                "agent":  self.clean_agent.name,
-                "role":   self.clean_agent.role,
-                "result": self.clean_agent.execute("clean", **context),
-            }
+        # ── Time-based queries ────────────────────────────────────────────────
+        # Pattern C.2: "average [metric] in [year]"
+        # e.g., "average yield in 2026", "average water in 2025"
+        year_match = re.search(
+            r'average\s+(.+?)\s+in\s+(\d{4})',
+            query_lower
+        )
+        if year_match:
+            raw_metric = year_match.group(1).strip()
+            year_str   = year_match.group(2).strip()
+            metric = _resolve_metric_single(raw_metric)
+            if metric and data is not None and not data.empty:
+                year = int(year_str)
+                mask = (data["datetime"].dt.year == year)
+                subset = data[mask]
+                if subset.empty:
+                    text = f"No historical records found for year {year}."
+                    mean_val = None
+                else:
+                    mean_val = float(subset[metric].mean())
+                    icon, unit = METRIC_LABELS.get(metric, ("•", ""))
+                    fmt = f"{mean_val:,.2f}" if unit == "$/ha" else f"{mean_val:.3f}"
+                    text = (
+                        f"The average **{metric}** in the year **{year}** "
+                        f"(based on {len(subset)} records) is **{icon} {fmt} {unit}**."
+                    )
+                return {
+                    "agent": self.agg_agent.name,
+                    "role":  self.agg_agent.role,
+                    "result": {"average": mean_val, "records_count": len(subset)},
+                    "text":  text
+                }
+
+
+        # ── 1. Specific Agricultural Queries / Insights ──────────────────────
+        # Pattern A: "Which scenario has the highest/lowest/best/worst [metric]?" or "What is the best scenario for [metric]?"
+        best_worst_match = re.search(
+            r'\b(highest|lowest|best|worst|maximum|minimum|max|min)\b\s+(?:scenario\s+(?:for|with|of)\s+)?(.+)',
+            query_lower
+        )
+        if best_worst_match:
+            op = best_worst_match.group(1)
+            raw_metric = best_worst_match.group(2).strip("? ")
+            metric = _resolve_metric_single(raw_metric)
+            if metric and data is not None and not data.empty:
+                is_lower_better = any(kw in metric.lower() for kw in ["methane", "emission", "intensity", "cost", "pesticide", "stress", "salinity"])
+                
+                if op in ["highest", "maximum", "max"] or (op == "best" and not is_lower_better) or (op == "worst" and is_lower_better):
+                    idx = data[metric].idxmax()
+                else:
+                    idx = data[metric].idxmin()
+                
+                row = data.loc[idx]
+                val = row[metric]
+                icon, unit = METRIC_LABELS.get(metric, ("•", ""))
+                fmt = f"{val:,.0f}" if unit == "$/ha" else f"{val:.3f}"
+                
+                text = (
+                    f"The scenario with the {op} {metric} is **{row['Scenario Name']}** "
+                    f"(Group: {row['Scenario Group']}, Climate: {row['Climate Type']}, Season: {row['Season Type']}).\n"
+                    f"  {icon} {metric}: **{fmt} {unit}**\n\n"
+                    f"Other key metrics for this scenario:\n"
+                    f"  🌾 Avg Yield: {row.get('Avg Yield', '-')} t/ha\n"
+                    f"  💨 Methane Emissions: {row.get('Methane Emissions', '-')} kg CH4/ha\n"
+                    f"  💰 Net Income: {row.get('Net Income', '-')} $/ha\n"
+                    f"  📈 Profit Margin: {row.get('Profit Margin', '-')} %"
+                )
+                return {
+                    "agent": self.agg_agent.name,
+                    "role": self.agg_agent.role,
+                    "result": row.to_dict(),
+                    "text": text
+                }
+
+        # Pattern B: "Scenarios with [metric] above/below/greater than/less than [value]"
+        threshold_match = re.search(
+            r'(?:scenarios|scenario)\s+with\s+(.+?)\s*(?:greater than|above|>|more than|less than|below|<|under)\s*([\d.]+)',
+            query_lower
+        )
+        if threshold_match:
+            raw_metric = threshold_match.group(1).strip()
+            val_str = threshold_match.group(2)
+            metric = _resolve_metric_single(raw_metric)
+            if metric and data is not None and not data.empty:
+                val = float(val_str)
+                is_greater = any(kw in query_lower for kw in ["greater", "above", ">", "more"])
+                
+                if is_greater:
+                    filtered_df = data[data[metric] > val]
+                    comparison_str = f"greater than {val}"
+                else:
+                    filtered_df = data[data[metric] < val]
+                    comparison_str = f"less than {val}"
+                
+                if filtered_df.empty:
+                    text = f"No scenarios found with {metric} {comparison_str}."
+                    result_list = []
+                else:
+                    if any(kw in metric.lower() for kw in ["methane", "emission", "intensity", "cost", "pesticide", "stress", "salinity"]):
+                        sorted_df = filtered_df.sort_values(by=metric, ascending=True)
+                    else:
+                        sorted_df = filtered_df.sort_values(by=metric, ascending=False)
+                    
+                    top_5 = sorted_df.head(5)
+                    icon, unit = METRIC_LABELS.get(metric, ("•", ""))
+                    
+                    lines = [f"Found {len(filtered_df)} scenarios with {metric} {comparison_str}. Here are the top 5:", ""]
+                    for _, row in top_5.iterrows():
+                        v_val = row[metric]
+                        fmt = f"{v_val:,.0f}" if unit == "$/ha" else f"{v_val:.3f}"
+                        lines.append(f"▸ **{row['Scenario Name']}** (Group: {row['Scenario Group']}): {icon} {metric} = {fmt} {unit}")
+                    text = "\n".join(lines)
+                    result_list = top_5.to_dict(orient="records")
+                
+                return {
+                    "agent": self.agg_agent.name,
+                    "role": self.agg_agent.role,
+                    "result": {"scenarios": result_list, "total_found": len(filtered_df)},
+                    "text": text
+                }
 
         # ── 2. Simulation ─────────────────────────────────────────────────────
         elif (

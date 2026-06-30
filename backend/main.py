@@ -218,23 +218,12 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=1000)
     context: dict = {}
 
-class UploadRequest(BaseModel):
-    """Raw CSV content as a UTF-8 string for cleaning and ingestion."""
-    file_content: str = Field(min_length=1)
-
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _check_upload_size(content: str) -> None:
-    if len(content.encode("utf-8")) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
-        )
 
 _VALID_DIMENSIONS = {
     "Climate Type", "Season Type", "Scenario Group",
     "Scenario Name", "AWD Adoption", "Resource Scenario",
+    "Year",
 }
 
 _VALID_METRICS = {
@@ -457,53 +446,6 @@ def api_process_agent_query(request: Request, req: QueryRequest):
     except Exception:
         raise HTTPException(status_code=500, detail="Agent query failed.")
 
-
-# 8. CSV ingestion — string body
-@app.post("/api/upload")
-@limiter.limit("20/minute")
-def api_upload_csv(request: Request, req: UploadRequest):
-    """Accept raw CSV text, clean and standardize it, return the result."""
-    _check_upload_size(req.file_content)
-    try:
-        result = orchestrator.process_query("clean", context={"file_content": req.file_content})
-        return result["result"]
-    except HTTPException:
-        raise
-    except Exception:
-        raise HTTPException(status_code=500, detail="CSV processing failed.")
-
-
-# 9. CSV ingestion — multipart file upload
-@app.post("/api/upload_file")
-@limiter.limit("20/minute")
-async def api_upload_csv_file(request: Request, file: UploadFile = File(...)):
-    """Accept a CSV file via multipart upload, clean and standardize it."""
-    allowed_types = {"text/csv", "application/csv", "text/plain"}
-    if file.content_type not in allowed_types:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported file type '{file.content_type}'. Please upload a CSV file.",
-        )
-    try:
-        content_bytes = await file.read()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Failed to read uploaded file.")
-
-    if len(content_bytes) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File too large. Maximum allowed size is {MAX_UPLOAD_BYTES // (1024*1024)} MB.",
-        )
-    try:
-        file_content = content_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded text.")
-
-    try:
-        result = orchestrator.process_query("clean", context={"file_content": file_content})
-        return result["result"]
-    except Exception:
-        raise HTTPException(status_code=500, detail="CSV processing failed.")
 
 # ── MCP SSE mount ─────────────────────────────────────────────────────────────
 try:
