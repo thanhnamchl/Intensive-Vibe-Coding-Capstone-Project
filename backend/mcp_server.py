@@ -1,4 +1,6 @@
 import os
+import io
+import csv
 import pandas as pd
 from mcp.server.fastmcp import FastMCP
 from sklearn.ensemble import RandomForestRegressor
@@ -9,19 +11,20 @@ import itertools
 # ── FastMCP Server ────────────────────────────────────────────────────────────
 mcp = FastMCP("AI Agents Agricultural Modeling")
 
-# ── CSV path ──────────────────────────────────────────────────────────────────
-CSV_PATH = os.path.join(
+# CSV path này hiện KHÔNG còn được dùng để auto-load — chỉ giữ lại làm hằng số
+# tham khảo. Muốn khôi phục auto-load cho dev cục bộ, tự thêm điều kiện env
+# (ví dụ os.getenv("AUTO_LOAD_DEFAULT_CSV") == "true") rồi gọi load_simulation_csv().
+DEFAULT_CSV_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "Simulation_Data.csv",
 )
 
 # ── Global state ──────────────────────────────────────────────────────────────
-data            = None
+data            = None   # None nghĩa là CHƯA có dữ liệu hợp lệ nào được upload
 models          = {}
 label_encoders  = {}
 
 # ── All numeric columns that can be predicted / aggregated ───────────────────
-# Features used as model inputs
 INPUT_FEATURES = [
     "AWD Adoption",
     "Fertilizer Usage",
@@ -30,7 +33,6 @@ INPUT_FEATURES = [
     "Salinity Exposure",
 ]
 
-# Targets the RandomForest models will be trained to predict
 PREDICTION_TARGETS = [
     "Avg Yield",
     "Methane Emissions",
@@ -48,8 +50,6 @@ PREDICTION_TARGETS = [
     "Salinity Stress",
 ]
 
-# All numeric columns we want to surface in aggregations
-# (superset of PREDICTION_TARGETS + raw input metrics)
 AGG_NUMERIC_COLS = [
     "Avg Yield",
     "Methane Emissions",
@@ -72,16 +72,6 @@ AGG_NUMERIC_COLS = [
     "Labor Intensity",
 ]
 
-# Mapping from AGG_NUMERIC_COLS → key name in the returned summary dict
-# (snake_case prefixed with "avg_")
-def _agg_key(col: str) -> str:
-    normalized = col.lower().replace(" ", "_")
-    if normalized.startswith("avg_"):
-        return normalized
-    return f"avg_{normalized}"
-
-
-# ── Categorical string columns to strip on load ───────────────────────────────
 CATEGORICAL_COLS = [
     "AWD Adoption",
     "Scenario Group",
@@ -91,70 +81,268 @@ CATEGORICAL_COLS = [
     "Scenario Name",
 ]
 
+# ── Cột bắt buộc theo đúng template hiện tại (hợp nhất tất cả các nhóm trên) ──
+REQUIRED_COLUMNS = sorted(set(
+    CATEGORICAL_COLS + INPUT_FEATURES + PREDICTION_TARGETS + AGG_NUMERIC_COLS
+))
 
-# ── Initialisation ────────────────────────────────────────────────────────────
+# Thứ tự cột "dễ đọc" hơn dùng riêng cho file CSV mẫu tải về (categorical trước,
+# rồi input, rồi target...). Tập hợp cột giống hệt REQUIRED_COLUMNS, chỉ khác thứ tự.
+SAMPLE_COLUMN_ORDER = list(dict.fromkeys(
+    CATEGORICAL_COLS + INPUT_FEATURES + PREDICTION_TARGETS + AGG_NUMERIC_COLS
+))
 
-def init_data_and_models():
+# Số dòng tối thiểu để train RandomForest cho từng target (đồng bộ với logic cũ)
+MIN_ROWS_PER_TARGET = 10
+
+
+def _agg_key(col: str) -> str:
+    normalized = col.lower().replace(" ", "_")
+    if normalized.startswith("avg_"):
+        return normalized
+    return f"avg_{normalized}"
+
+
+# ── Validate schema CSV upload lên có đúng template không ────────────────────
+
+def validate_csv_schema(df: pd.DataFrame) -> tuple[bool, list[str]]:
+    """
+    Kiểm tra file CSV được upload có đúng cấu trúc (template) mà hệ thống
+    yêu cầu hay không. Trả về (is_valid, danh_sach_loi).
+    """
+    errors: list[str] = []
+
+    # 1. Kiểm tra thiếu cột
+    missing = [c for c in REQUIRED_COLUMNS if c not in df.columns]
+    if missing:
+        errors.append(f"Thiếu {len(missing)} cột bắt buộc: {missing}")
+
+    # 2. Kiểm tra các cột số phải là dạng số (không lẫn text/rác)
+    numeric_cols = [c for c in REQUIRED_COLUMNS if c not in CATEGORICAL_COLS]
+    for col in numeric_cols:
+        if col not in df.columns:
+            continue
+        coerced = pd.to_numeric(df[col], errors="coerce")
+        bad_mask = coerced.isna() & df[col].notna()
+        if bad_mask.any():
+            errors.append(
+                f"Cột '{col}' có {int(bad_mask.sum())} giá trị không phải số"
+            )
+
+    # 3. Kiểm tra cột categorical không được rỗng toàn bộ
+    for col in CATEGORICAL_COLS:
+        if col in df.columns and df[col].dropna().astype(str).str.strip().eq("").all():
+            errors.append(f"Cột '{col}' không có giá trị hợp lệ nào")
+
+    # 4. Kiểm tra AWD Adoption chỉ có đúng 2 giá trị mong đợi (nếu cột tồn tại)
+    if "AWD Adoption" in df.columns:
+        vals = set(df["AWD Adoption"].dropna().astype(str).str.strip().unique())
+        allowed = {"With AWD", "Without AWD"}
+        unexpected = vals - allowed
+        if unexpected and vals:
+            errors.append(
+                f"Cột 'AWD Adoption' có giá trị lạ ngoài {allowed}: {unexpected}"
+            )
+
+    # 5. Kiểm tra đủ số dòng tối thiểu để train model
+    if len(df) < MIN_ROWS_PER_TARGET:
+        errors.append(
+            f"File cần tối thiểu {MIN_ROWS_PER_TARGET} dòng dữ liệu, hiện có {len(df)}"
+        )
+
+    return (len(errors) == 0, errors)
+
+
+# ── Load + train từ một DataFrame đã validate ─────────────────────────────────
+
+def _load_and_train(df: pd.DataFrame) -> dict:
     global data, models, label_encoders
 
-    if not os.path.exists(CSV_PATH):
-        raise FileNotFoundError(f"Simulation CSV file not found at {CSV_PATH}")
+    df = df.copy()
 
-    # ── Ingest ────────────────────────────────────────────────────────────────
-    data = pd.read_csv(CSV_PATH)
+    if "datetime" in df.columns:
+        df["datetime"] = pd.to_datetime(df["datetime"], errors="coerce")
 
-    # Datetime
-    if "datetime" in data.columns:
-        data["datetime"] = pd.to_datetime(data["datetime"], errors="coerce")
-
-    # Strip whitespace from categorical columns (only those present in the file)
     for col in CATEGORICAL_COLS:
-        if col in data.columns:
-            data[col] = data[col].astype(str).str.strip()
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
 
-    # ── Label-encode AWD Adoption ─────────────────────────────────────────────
+    new_label_encoders = {}
     le_awd = LabelEncoder()
-    data["AWD_encoded"] = le_awd.fit_transform(data["AWD Adoption"])
-    label_encoders["AWD Adoption"] = le_awd
+    df["AWD_encoded"] = le_awd.fit_transform(df["AWD Adoption"])
+    new_label_encoders["AWD Adoption"] = le_awd
 
-    X_all = data[
+    X_all = df[
         ["AWD_encoded", "Fertilizer Usage", "Pesticide Usage",
          "Water Usage", "Salinity Exposure"]
     ]
 
-    # ── Train one RandomForest per prediction target ──────────────────────────
-    trained = []
-    skipped = []
+    new_models = {}
+    trained, skipped = [], []
     for target in PREDICTION_TARGETS:
-        if target not in data.columns:
+        if target not in df.columns:
             skipped.append(target)
             continue
 
-        mask    = data[target].notna()
+        mask = df[target].notna()
         X_train = X_all[mask]
-        y_train = data.loc[mask, target]
+        y_train = df.loc[mask, target]
 
-        if len(y_train) < 10:
+        if len(y_train) < MIN_ROWS_PER_TARGET:
             skipped.append(target)
             continue
 
         model = RandomForestRegressor(n_estimators=100, random_state=42, n_jobs=-1)
         model.fit(X_train, y_train)
-        models[target] = model
+        new_models[target] = model
         trained.append(target)
 
-    print(
-        f"[mcp_server] Data ingested ({len(data)} rows). "
-        f"Models trained: {trained}. "
-        + (f"Skipped (column absent or too few rows): {skipped}." if skipped else "")
-    )
+    if not new_models:
+        return {
+            "status": "error",
+            "message": "Không train được model nào — dữ liệu không đủ ở các cột target.",
+            "skipped": skipped,
+        }
+
+    # Chỉ commit vào global state khi mọi thứ ổn — tránh để hệ thống ở trạng thái dở dang
+    data = df
+    models = new_models
+    label_encoders = new_label_encoders
+
+    return {
+        "status": "success",
+        "rows_loaded": len(df),
+        "trained_models": trained,
+        "skipped_models": skipped,
+    }
 
 
-# Run on import
-init_data_and_models()
+def load_simulation_csv(csv_path: str) -> dict:
+    if not csv_path or not os.path.exists(csv_path):
+        return {"status": "error", "message": f"Không tìm thấy file tại: {csv_path}"}
+
+    try:
+        df = pd.read_csv(csv_path)
+    except Exception as e:
+        return {"status": "error", "message": f"Không đọc được CSV: {e}"}
+
+    is_valid, errors = validate_csv_schema(df)
+    if not is_valid:
+        return {
+            "status": "invalid_template",
+            "message": "CSV không đúng định dạng template yêu cầu.",
+            "errors": errors,
+            "required_columns": REQUIRED_COLUMNS,
+        }
+
+    return _load_and_train(df)
+
+
+def _require_data():
+    """Gọi ở đầu mỗi tool cần dữ liệu. Raise lỗi rõ ràng nếu chưa upload CSV."""
+    if data is None:
+        raise ValueError(
+            "Chưa có dữ liệu mô phỏng nào được nạp. "
+            "Vui lòng gọi tool 'upload_simulation_csv' với file CSV đúng template trước."
+        )
+
+
+# Server luôn khởi động với data = None. KHÔNG auto-load bất kỳ file nào có sẵn
+# trên đĩa (kể cả DEFAULT_CSV_PATH) — người dùng bắt buộc phải upload qua
+# upload_simulation_csv() / POST /api/upload trước khi dùng được các tool khác.
+print("[mcp_server] Chưa có dữ liệu. Chờ người dùng upload_simulation_csv().")
+
+
+# ── Sinh file CSV mẫu để người dùng tải về, điền dữ liệu thật rồi upload lại ──
+
+def build_sample_csv_text(n_rows: int = 6) -> str:
+    """
+    Sinh 1 chuỗi CSV đúng template (đủ REQUIRED_COLUMNS) kèm vài dòng ví dụ
+    với giá trị hợp lý trong khoảng agronomically-valid, để người dùng có
+    điểm khởi đầu rõ ràng thay vì phải tự đoán tên cột / định dạng.
+    """
+    rng = np.random.default_rng(42)
+    rows = []
+    for i in range(n_rows):
+        awd = "With AWD" if i % 2 == 0 else "Without AWD"
+        row = {
+            "AWD Adoption":        awd,
+            "Scenario Group":      "BAU" if i % 2 == 0 else "OMRH",
+            "Season Type":         "Winter-Spring" if i % 3 != 0 else "Summer-Autumn",
+            "Climate Type":        "Historical" if i % 2 == 0 else "RCP4.5",
+            "Resource Scenario":   "High Resource" if i % 2 == 0 else "Low Resource",
+            "Scenario Name":       f"Scenario_{i + 1}",
+            "Fertilizer Usage":    round(float(rng.uniform(80, 200)), 1),
+            "Pesticide Usage":     round(float(rng.uniform(2, 10)), 2),
+            "Water Usage":         round(float(rng.uniform(400, 900)), 1),
+            "Salinity Exposure":   round(float(rng.uniform(0.005, 0.03)), 4),
+            "Avg Yield":           round(float(rng.uniform(4, 7)), 2),
+            "Methane Emissions":   round(float(rng.uniform(150, 400)), 1),
+            "Emission Intensity":  round(float(rng.uniform(20, 60)), 2),
+            "Profit Margin":       round(float(rng.uniform(10, 35)), 1),
+            "Net Income":          round(float(rng.uniform(800, 2500)), 0),
+            "Production Cost":     round(float(rng.uniform(500, 1200)), 0),
+            "Straw Value":         round(float(rng.uniform(50, 200)), 0),
+            "Max Flood Continuous": round(float(rng.uniform(0, 10)), 1),
+            "Flood Stress":        round(float(rng.uniform(0, 1)), 3),
+            "Drought Stress":      round(float(rng.uniform(0, 1)), 3),
+            "Salinity Stress":     round(float(rng.uniform(0, 1)), 3),
+            "Biodiversity":        round(float(rng.uniform(0.3, 0.9)), 3),
+            "Resilient Varieties": round(float(rng.uniform(20, 90)), 1),
+            "Water Reliability":   round(float(rng.uniform(50, 95)), 1),
+            "Labor Intensity":     round(float(rng.uniform(20, 80)), 1),
+        }
+        rows.append(row)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=SAMPLE_COLUMN_ORDER)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({col: row.get(col, "") for col in SAMPLE_COLUMN_ORDER})
+    return output.getvalue()
 
 
 # ── MCP Tools ─────────────────────────────────────────────────────────────────
+
+@mcp.tool()
+def get_sample_csv() -> str:
+    """
+    Trả về nội dung 1 file CSV mẫu đúng template (đủ cột bắt buộc, kèm vài
+    dòng dữ liệu ví dụ) để người dùng tải về, điền dữ liệu thật rồi upload
+    lại qua upload_simulation_csv() / POST /api/upload.
+    """
+    return build_sample_csv_text()
+
+
+@mcp.tool()
+def upload_simulation_csv(csv_path: str) -> dict:
+    """
+    Upload và validate một file CSV mô phỏng nông nghiệp.
+    PHẢI gọi tool này (và nhận status="success") trước khi dùng
+    get_scenarios, get_aggregated_metrics, hoặc run_agricultural_simulation.
+
+    File CSV phải chứa đầy đủ các cột trong REQUIRED_COLUMNS (xem get_data_status
+    để lấy danh sách cụ thể), đúng kiểu dữ liệu, và tối thiểu 10 dòng.
+    """
+    return load_simulation_csv(csv_path)
+
+
+@mcp.tool()
+def get_data_status() -> dict:
+    """
+    Kiểm tra trạng thái dữ liệu hiện tại: đã có CSV hợp lệ được nạp chưa,
+    model đã sẵn sàng chưa, và danh sách cột bắt buộc theo template.
+    Dashboard nên gọi tool này trước khi cho phép người dùng vào trang chính.
+    """
+    return {
+        "data_loaded": data is not None,
+        "rows_loaded": len(data) if data is not None else 0,
+        "models_ready": len(models) > 0,
+        "trained_targets": list(models.keys()),
+        "required_columns": REQUIRED_COLUMNS,
+        "categorical_columns": CATEGORICAL_COLS,
+    }
+
 
 @mcp.tool()
 def get_scenarios() -> dict:
@@ -163,7 +351,7 @@ def get_scenarios() -> dict:
     scenario groups, season types, climate types, resource scenarios,
     AWD options, and scenario names.
     """
-    global data
+    _require_data()
     result = {
         "scenario_groups":    data["Scenario Group"].dropna().unique().tolist(),
         "season_types":       data["Season Type"].dropna().unique().tolist(),
@@ -179,26 +367,14 @@ def get_scenarios() -> dict:
 @mcp.tool()
 def get_aggregated_metrics(filters: dict = None) -> dict:
     """
-    Return aggregated means for all 19 agricultural indicators, with optional
+    Return aggregated means for all agricultural indicators, with optional
     pre-filtering.
 
     Supported filter keys:
         Scenario Group, Season Type, Climate Type, Resource Scenario,
         AWD Adoption, Scenario Name
-
-    Returns a dict with keys of the form "avg_<snake_case_column_name>",
-    plus "total_records" and "awd_comparison".
-
-    Example returned keys:
-        avg_yield, avg_methane_emissions, avg_emission_intensity,
-        avg_profit_margin, avg_net_income, avg_production_cost,
-        avg_straw_value, avg_water_usage, avg_fertilizer_usage,
-        avg_pesticide_usage, avg_salinity_exposure, avg_max_flood_continuous,
-        avg_flood_stress, avg_drought_stress, avg_salinity_stress,
-        avg_biodiversity, avg_resilient_varieties, avg_water_reliability,
-        avg_labor_intensity
     """
-    global data
+    _require_data()
     filtered = data.copy()
 
     if filters:
@@ -211,12 +387,10 @@ def get_aggregated_metrics(filters: dict = None) -> dict:
 
     summary: dict = {"total_records": len(filtered)}
 
-    # Aggregate every numeric indicator that exists in the filtered data
     for col in AGG_NUMERIC_COLS:
         if col in filtered.columns:
             summary[_agg_key(col)] = float(filtered[col].mean())
 
-    # AWD breakdown across the three core indicators
     core_breakdown_cols = [
         c for c in ["Avg Yield", "Methane Emissions", "Profit Margin"]
         if c in filtered.columns
@@ -237,7 +411,7 @@ def run_agricultural_simulation(combos: list[tuple]) -> list[dict]:
     """
     combos: list of (awd_str, fert, pest, water, sal)
     """
-    global models, label_encoders
+    _require_data()
 
     awd_strings = [c[0] for c in combos]
     try:
@@ -253,7 +427,6 @@ def run_agricultural_simulation(combos: list[tuple]) -> list[dict]:
         "Salinity Exposure": [c[4] for c in combos],
     }
 
-    # Reorder columns theo đúng thứ tự model đã train — tránh mọi lỗi thứ tự
     first_model = next(iter(models.values()))
     feature_order = list(first_model.feature_names_in_)
     X = pd.DataFrame(raw)[feature_order]
@@ -264,8 +437,6 @@ def run_agricultural_simulation(combos: list[tuple]) -> list[dict]:
 
     return pd.DataFrame(results).to_dict(orient="records")
 
-
-# ── Scoring vectorized ────────────────────────────────────────────────────────
 
 def _score_batch(preds: list[dict], target_methane: float) -> np.ndarray:
     yields   = np.array([p["Avg Yield"]         for p in preds])

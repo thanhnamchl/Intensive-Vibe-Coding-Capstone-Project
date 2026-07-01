@@ -53,7 +53,10 @@ import {
   Upload,
   Sliders,
   RefreshCw,
-  Sparkles
+  Sparkles,
+  FileWarning,
+  CheckCircle2,
+  FileSpreadsheet
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -163,7 +166,196 @@ interface CleaningResult {
   preview?: Record<string, unknown>[];
 }
 
-export default function App() {
+// ── Data status shape returned by GET /api/data-status ────────────────────────
+interface DataStatus {
+  data_loaded: boolean;
+  rows_loaded: number;
+  models_ready: boolean;
+  trained_targets: string[];
+  required_columns: string[];
+  categorical_columns: string[];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// UploadGate — bắt buộc người dùng upload + validate CSV trước khi vào dashboard
+// ═══════════════════════════════════════════════════════════════════════════
+function UploadGate({ onReady }: { onReady: () => void }) {
+  const [checking, setChecking] = useState(true);
+  const [requiredColumns, setRequiredColumns] = useState<string[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const checkStatus = async () => {
+    setChecking(true);
+    try {
+      const res = await fetch(`${API_BASE}/data-status`);
+      const data: DataStatus = await res.json();
+      setRequiredColumns(data.required_columns || []);
+      if (data.data_loaded) {
+        onReady();
+        return;
+      }
+    } catch (e) {
+      console.error('Error checking data status', e);
+      setErrorMessage('Không kết nối được tới server. Kiểm tra lại backend đang chạy chưa.');
+    } finally {
+      setChecking(false);
+    }
+  };
+
+  useEffect(() => {
+    checkStatus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const uploadFile = async (file: File) => {
+    setErrors([]);
+    setErrorMessage(null);
+
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setErrorMessage('Chỉ chấp nhận file .csv');
+      return;
+    }
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setErrorMessage(
+        `File quá lớn (${(file.size / 1024 / 1024).toFixed(1)}MB). ` +
+        `Giới hạn tối đa ${(MAX_UPLOAD_BYTES / 1024 / 1024).toFixed(0)}MB.`
+      );
+      return;
+    }
+
+    setFileName(file.name);
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const res = await fetch(`${API_BASE}/upload`, {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        const detail = data.detail;
+        setErrorMessage((typeof detail === 'string' ? detail : detail?.message) || 'Upload thất bại.');
+        setErrors(detail?.errors || []);
+        if (detail?.required_columns) setRequiredColumns(detail.required_columns);
+        return;
+      }
+
+      // Upload + validate + train model thành công
+      onReady();
+    } catch (e) {
+      console.error('Error uploading CSV', e);
+      setErrorMessage('Lỗi kết nối khi upload file. Vui lòng thử lại.');
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragActive(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) uploadFile(file);
+  };
+
+  const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) uploadFile(file);
+    e.target.value = '';
+  };
+
+  if (checking) {
+    return (
+      <div className="upload-gate-container">
+        <div className="upload-gate-card">
+          <RefreshCw className="animate-spin" size={28} />
+          <p style={{ marginTop: '1rem', color: 'var(--text-muted)' }}>Đang kiểm tra dữ liệu hệ thống...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="upload-gate-container">
+      <div className="upload-gate-card">
+        <div className="header-title" style={{ marginBottom: '1.5rem' }}>
+          <h1 style={{ fontSize: '1.5rem' }}>AI-Agents Agricultural Decision Support System</h1>
+          <p>Chưa có dữ liệu mô phỏng. Vui lòng upload file CSV đúng template để bắt đầu.</p>
+        </div>
+
+        <div
+          className={`upload-dropzone ${dragActive ? 'active' : ''}`}
+          onDragOver={(e) => { e.preventDefault(); setDragActive(true); }}
+          onDragLeave={() => setDragActive(false)}
+          onDrop={handleDrop}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".csv"
+            style={{ display: 'none' }}
+            onChange={handleFileInput}
+            disabled={uploading}
+          />
+          {uploading ? (
+            <>
+              <RefreshCw className="animate-spin" size={32} />
+              <p style={{ marginTop: '0.75rem' }}>Đang xử lý {fileName}...</p>
+            </>
+          ) : (
+            <>
+              <Upload size={32} />
+              <p style={{ marginTop: '0.75rem', fontWeight: 600 }}>Kéo thả file CSV vào đây, hoặc bấm để chọn file</p>
+              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                Tối đa {(MAX_UPLOAD_BYTES / 1024 / 1024).toFixed(0)}MB &middot; định dạng .csv
+              </p>
+            </>
+          )}
+        </div>
+
+        {errorMessage && (
+          <div className="upload-error-box">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 600 }}>
+              <FileWarning size={16} /> {errorMessage}
+            </div>
+            {errors.length > 0 && (
+              <ul style={{ marginTop: '0.5rem', paddingLeft: '1.2rem', fontSize: '0.82rem' }}>
+                {errors.map((err, i) => <li key={i}>{err}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {requiredColumns.length > 0 && (
+          <details className="upload-columns-details">
+            <summary>
+              <FileSpreadsheet size={14} style={{ marginRight: '0.4rem', verticalAlign: 'text-bottom' }} />
+              Xem {requiredColumns.length} cột bắt buộc theo template
+            </summary>
+            <div className="upload-columns-chips">
+              {requiredColumns.map((col) => (
+                <span key={col} className="upload-column-chip">{col}</span>
+              ))}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Dashboard — nội dung chính, chỉ render sau khi UploadGate xác nhận có dữ liệu
+// ═══════════════════════════════════════════════════════════════════════════
+function Dashboard() {
   // Scenario Configurations & Filter state
   const [scenariosInfo, setScenariosInfo] = useState<ScenarioInfo | null>(null);
   const [filters, setFilters] = useState({
@@ -299,26 +491,6 @@ export default function App() {
     }
   };
 
-  // const runOptimization = async () => {
-  //   setLoadingOpt(true);
-  //   try {
-  //     const res = await fetch(`${API_BASE}/optimize`, {
-  //       method: 'POST',
-  //       headers: { 'Content-Type': 'application/json' },
-  //       body: JSON.stringify({
-  //         target_methane: optTargetMethane === '' ? 200.0 : optTargetMethane,
-  //         pesticide_usage: simInputs.pesticide_usage,
-  //         salinity_exposure: simInputs.salinity_exposure
-  //       })
-  //     });
-  //     const data = await res.json();
-  //     setOptResults(data);
-  //   } catch (e) {
-  //     console.error("Error running optimization", e);
-  //   } finally {
-  //     setLoadingOpt(false);
-  //   }
-  // };
   const runOptimization = async () => {
     setLoadingOpt(true);
     setOptError(null);
@@ -821,4 +993,16 @@ export default function App() {
       </section>
     </div>
   );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// App — cổng chính: quyết định hiện UploadGate hay Dashboard
+// ═══════════════════════════════════════════════════════════════════════════
+export default function App() {
+  const [ready, setReady] = useState(false);
+
+  if (!ready) {
+    return <UploadGate onReady={() => setReady(true)} />;
+  }
+  return <Dashboard />;
 }

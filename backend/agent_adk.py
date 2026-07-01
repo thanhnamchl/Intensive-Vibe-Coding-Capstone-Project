@@ -1,5 +1,6 @@
 import re
-from mcp_server import get_aggregated_metrics, run_agricultural_simulation, get_scenarios, data,  _score_batch
+import mcp_server
+from mcp_server import get_aggregated_metrics, run_agricultural_simulation, get_scenarios, _score_batch
 import itertools
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from enum import Enum
@@ -250,23 +251,25 @@ class AggregationAgent(Agent):
 
         summary = get_aggregated_metrics(filters)
 
-        global data
-        if data is None or data.empty:
+        # Luôn đọc mcp_server.data trực tiếp (không cache) để thấy được dữ liệu
+        # mới nhất ngay sau khi người dùng upload CSV qua /api/upload.
+        current_data = mcp_server.data
+        if current_data is None or current_data.empty:
             return summary
 
         # ── Structured Compare X by Y path ───────────────────────────────────
         if dimension:
             temp_col = None
-            if dimension not in data.columns:
-                if dimension == "Year" and "datetime" in data.columns:
-                    data["Year"] = data["datetime"].dt.year.dropna().astype(int).astype(str)
+            if dimension not in current_data.columns:
+                if dimension == "Year" and "datetime" in current_data.columns:
+                    current_data["Year"] = current_data["datetime"].dt.year.dropna().astype(int).astype(str)
                     temp_col = "Year"
                 else:
                     summary["compare_error"] = f"Column '{dimension}' not found in dataset."
                     return summary
 
             # Apply filters to the dataframe before grouping
-            filtered_data = data
+            filtered_data = current_data
             for col, val in filters.items():
                 if col in filtered_data.columns and val:
                     filtered_data = filtered_data[filtered_data[col] == val]
@@ -278,7 +281,7 @@ class AggregationAgent(Agent):
             if not cols_to_group:
                 summary["compare_error"] = "None of the requested metric columns exist in the dataset."
                 if temp_col:
-                    data.drop(columns=[temp_col], inplace=True)
+                    current_data.drop(columns=[temp_col], inplace=True)
                 return summary
 
             if filtered_data.empty:
@@ -295,23 +298,23 @@ class AggregationAgent(Agent):
             summary["compare_breakdown"] = breakdown
 
             if temp_col:
-                data.drop(columns=[temp_col], inplace=True)
+                current_data.drop(columns=[temp_col], inplace=True)
             return summary
 
         # ── Legacy keyword-based breakdown (backward-compatible) ─────────────
-        breakdown_cols = [c for c in DEFAULT_METRICS if c in data.columns]
+        breakdown_cols = [c for c in DEFAULT_METRICS if c in current_data.columns]
 
         if "by climate" in task.lower() or "climate" in task.lower():
             summary["climate_breakdown"] = (
-                data.groupby("Climate Type")[breakdown_cols].mean().round(3).to_dict(orient="index")
+                current_data.groupby("Climate Type")[breakdown_cols].mean().round(3).to_dict(orient="index")
             )
         if "by season" in task.lower() or "season" in task.lower():
             summary["season_breakdown"] = (
-                data.groupby("Season Type")[breakdown_cols].mean().round(3).to_dict(orient="index")
+                current_data.groupby("Season Type")[breakdown_cols].mean().round(3).to_dict(orient="index")
             )
         if "by scenario" in task.lower() or "scenario" in task.lower():
             summary["scenario_breakdown"] = (
-                data.groupby("Scenario Group")[breakdown_cols].mean().round(3).to_dict(orient="index")
+                current_data.groupby("Scenario Group")[breakdown_cols].mean().round(3).to_dict(orient="index")
             )
 
         return summary
@@ -558,10 +561,11 @@ class AgentOrchestrator:
             raw_metric = year_match.group(1).strip()
             year_str   = year_match.group(2).strip()
             metric = _resolve_metric_single(raw_metric)
-            if metric and data is not None and not data.empty:
+            current_data = mcp_server.data
+            if metric and current_data is not None and not current_data.empty:
                 year = int(year_str)
-                mask = (data["datetime"].dt.year == year)
-                subset = data[mask]
+                mask = (current_data["datetime"].dt.year == year)
+                subset = current_data[mask]
                 if subset.empty:
                     text = f"No historical records found for year {year}."
                     mean_val = None
@@ -591,19 +595,20 @@ class AgentOrchestrator:
             op = best_worst_match.group(1)
             raw_metric = best_worst_match.group(2).strip("? ")
             metric = _resolve_metric_single(raw_metric)
-            if metric and data is not None and not data.empty:
+            current_data = mcp_server.data
+            if metric and current_data is not None and not current_data.empty:
                 is_lower_better = any(kw in metric.lower() for kw in ["methane", "emission", "intensity", "cost", "pesticide", "stress", "salinity"])
-                
+
                 if op in ["highest", "maximum", "max"] or (op == "best" and not is_lower_better) or (op == "worst" and is_lower_better):
-                    idx = data[metric].idxmax()
+                    idx = current_data[metric].idxmax()
                 else:
-                    idx = data[metric].idxmin()
-                
-                row = data.loc[idx]
+                    idx = current_data[metric].idxmin()
+
+                row = current_data.loc[idx]
                 val = row[metric]
                 icon, unit = METRIC_LABELS.get(metric, ("•", ""))
                 fmt = f"{val:,.0f}" if unit == "$/ha" else f"{val:.3f}"
-                
+
                 text = (
                     f"The scenario with the {op} {metric} is **{row['Scenario Name']}** "
                     f"(Group: {row['Scenario Group']}, Climate: {row['Climate Type']}, Season: {row['Season Type']}).\n"
@@ -630,17 +635,18 @@ class AgentOrchestrator:
             raw_metric = threshold_match.group(1).strip()
             val_str = threshold_match.group(2)
             metric = _resolve_metric_single(raw_metric)
-            if metric and data is not None and not data.empty:
+            current_data = mcp_server.data
+            if metric and current_data is not None and not current_data.empty:
                 val = float(val_str)
                 is_greater = any(kw in query_lower for kw in ["greater", "above", ">", "more"])
-                
+
                 if is_greater:
-                    filtered_df = data[data[metric] > val]
+                    filtered_df = current_data[current_data[metric] > val]
                     comparison_str = f"greater than {val}"
                 else:
-                    filtered_df = data[data[metric] < val]
+                    filtered_df = current_data[current_data[metric] < val]
                     comparison_str = f"less than {val}"
-                
+
                 if filtered_df.empty:
                     text = f"No scenarios found with {metric} {comparison_str}."
                     result_list = []
@@ -649,10 +655,10 @@ class AgentOrchestrator:
                         sorted_df = filtered_df.sort_values(by=metric, ascending=True)
                     else:
                         sorted_df = filtered_df.sort_values(by=metric, ascending=False)
-                    
+
                     top_5 = sorted_df.head(5)
                     icon, unit = METRIC_LABELS.get(metric, ("•", ""))
-                    
+
                     lines = [f"Found {len(filtered_df)} scenarios with {metric} {comparison_str}. Here are the top 5:", ""]
                     for _, row in top_5.iterrows():
                         v_val = row[metric]
@@ -660,7 +666,7 @@ class AgentOrchestrator:
                         lines.append(f"▸ **{row['Scenario Name']}** (Group: {row['Scenario Group']}): {icon} {metric} = {fmt} {unit}")
                     text = "\n".join(lines)
                     result_list = top_5.to_dict(orient="records")
-                
+
                 return {
                     "agent": self.agg_agent.name,
                     "role": self.agg_agent.role,

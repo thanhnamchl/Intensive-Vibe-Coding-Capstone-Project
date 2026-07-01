@@ -1,184 +1,281 @@
-.counter {
-  font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-  margin-bottom: 24px;
+/* ═══════════════════════════════════════════════════════════════════════
+   Upload Gate — màn hình bắt buộc upload CSV trước khi vào dashboard
+   Nối tiếp file style chính, dùng lại đúng biến --panel-bg / --primary /
+   --danger / --text-muted... đã khai báo ở :root
+   ═══════════════════════════════════════════════════════════════════════ */
 
-  &:hover {
-    border-color: var(--accent-border);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
+.upload-gate-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
 }
 
-.hero {
-  position: relative;
-
-  .base,
-  .framework,
-  .vite {
-    inset-inline: 0;
-    margin: 0 auto;
-  }
-
-  .base {
-    width: 170px;
-    position: relative;
-    z-index: 0;
-  }
-
-  .framework,
-  .vite {
-    position: absolute;
-  }
-
-  .framework {
-    z-index: 1;
-    top: 34px;
-    height: 28px;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
-      scale(1.4);
-  }
-
-  .vite {
-    z-index: 0;
-    top: 107px;
-    height: 26px;
-    width: auto;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
-      scale(0.8);
-  }
+.upload-gate-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: 1rem;
+  padding: 2.5rem;
+  box-shadow: var(--glass-shadow);
+  text-align: center;
 }
 
-#center {
+.upload-gate-card .header-title h1 {
+  background: linear-gradient(to right, #4ade80, #10b981, #06b6d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.5rem;
+}
+
+.upload-gate-card .header-title p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Dropzone — kế thừa look của .upload-area đã có, thêm trạng thái active/uploading */
+.upload-dropzone {
+  border: 2px dashed var(--panel-border);
+  padding: 2.5rem 1.5rem;
+  border-radius: 0.75rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: rgba(34, 197, 94, 0.02);
   display: flex;
   flex-direction: column;
-  gap: 25px;
-  place-content: center;
-  place-items: center;
-  flex-grow: 1;
-
-  @media (max-width: 1024px) {
-    padding: 32px 20px 24px;
-    gap: 18px;
-  }
+  align-items: center;
+  color: var(--text-primary);
 }
 
-#next-steps {
-  display: flex;
-  border-top: 1px solid var(--border);
+.upload-dropzone:hover {
+  border-color: var(--primary);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.upload-dropzone.active {
+  border-color: var(--primary);
+  background: rgba(34, 197, 94, 0.08);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.upload-dropzone svg {
+  color: var(--primary);
+}
+
+/* Error box khi validate CSV thất bại */
+.upload-error-box {
+  margin-top: 1.25rem;
   text-align: left;
-
-  & > div {
-    flex: 1 1 0;
-    padding: 32px;
-    @media (max-width: 1024px) {
-      padding: 24px 20px;
-    }
-  }
-
-  .icon {
-    margin-bottom: 16px;
-    width: 22px;
-    height: 22px;
-  }
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-    text-align: center;
-  }
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid var(--danger);
+  border-radius: 0.5rem;
+  padding: 0.875rem 1rem;
+  color: #fca5a5;
 }
 
-#docs {
-  border-right: 1px solid var(--border);
-
-  @media (max-width: 1024px) {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
+.upload-error-box ul {
+  list-style: disc;
+  color: #fca5a5;
 }
 
-#next-steps ul {
+.upload-error-box li {
+  margin-bottom: 0.2rem;
+}
+
+/* Danh sách cột bắt buộc (collapsible) */
+.upload-columns-details {
+  margin-top: 1.25rem;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.upload-columns-details summary {
+  cursor: pointer;
+  color: var(--secondary);
+  font-weight: 500;
   list-style: none;
-  padding: 0;
   display: flex;
-  gap: 8px;
-  margin: 32px 0 0;
+  align-items: center;
+  user-select: none;
+}
 
-  .logo {
-    height: 18px;
+.upload-columns-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.upload-columns-details[open] summary {
+  margin-bottom: 0.75rem;
+}
+
+.upload-columns-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.upload-column-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .upload-gate-card {
+    padding: 1.75rem 1.25rem;
   }
 
-  a {
-    color: var(--text-h);
-    font-size: 16px;
-    border-radius: 6px;
-    background: var(--social-bg);
-    display: flex;
-    padding: 6px 12px;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
-
-    &:hover {
-      box-shadow: var(--shadow);
-    }
-    .button-icon {
-      height: 18px;
-      width: 18px;
-    }
-  }
-
-  @media (max-width: 1024px) {
-    margin-top: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-
-    li {
-      flex: 1 1 calc(50% - 8px);
-    }
-
-    a {
-      width: 100%;
-      justify-content: center;
-      box-sizing: border-box;
-    }
+  .upload-gate-card .header-title h1 {
+    font-size: 1.25rem;
   }
 }
 
-#spacer {
-  height: 88px;
-  border-top: 1px solid var(--border);
-  @media (max-width: 1024px) {
-    height: 48px;
-  }
+/* ═══════════════════════════════════════════════════════════════════════
+   Upload Gate — màn hình bắt buộc upload CSV trước khi vào dashboard
+   Nối tiếp file style chính, dùng lại đúng biến --panel-bg / --primary /
+   --danger / --text-muted... đã khai báo ở :root
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.upload-gate-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
 }
 
-.ticks {
-  position: relative;
+.upload-gate-card {
   width: 100%;
+  max-width: 560px;
+  background: var(--panel-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--panel-border);
+  border-radius: 1rem;
+  padding: 2.5rem;
+  box-shadow: var(--glass-shadow);
+  text-align: center;
+}
 
-  &::before,
-  &::after {
-    content: '';
-    position: absolute;
-    top: -4.5px;
-    border: 5px solid transparent;
+.upload-gate-card .header-title h1 {
+  background: linear-gradient(to right, #4ade80, #10b981, #06b6d4);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin-bottom: 0.5rem;
+}
+
+.upload-gate-card .header-title p {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+/* Dropzone — kế thừa look của .upload-area đã có, thêm trạng thái active/uploading */
+.upload-dropzone {
+  border: 2px dashed var(--panel-border);
+  padding: 2.5rem 1.5rem;
+  border-radius: 0.75rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  background: rgba(34, 197, 94, 0.02);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--text-primary);
+}
+
+.upload-dropzone:hover {
+  border-color: var(--primary);
+  background: rgba(34, 197, 94, 0.05);
+}
+
+.upload-dropzone.active {
+  border-color: var(--primary);
+  background: rgba(34, 197, 94, 0.08);
+  box-shadow: 0 0 0 3px var(--primary-glow);
+}
+
+.upload-dropzone svg {
+  color: var(--primary);
+}
+
+/* Error box khi validate CSV thất bại */
+.upload-error-box {
+  margin-top: 1.25rem;
+  text-align: left;
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid var(--danger);
+  border-radius: 0.5rem;
+  padding: 0.875rem 1rem;
+  color: #fca5a5;
+}
+
+.upload-error-box ul {
+  list-style: disc;
+  color: #fca5a5;
+}
+
+.upload-error-box li {
+  margin-bottom: 0.2rem;
+}
+
+/* Danh sách cột bắt buộc (collapsible) */
+.upload-columns-details {
+  margin-top: 1.25rem;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.upload-columns-details summary {
+  cursor: pointer;
+  color: var(--secondary);
+  font-weight: 500;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+
+.upload-columns-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.upload-columns-details[open] summary {
+  margin-bottom: 0.75rem;
+}
+
+.upload-columns-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.upload-column-chip {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  padding: 0.25rem 0.6rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .upload-gate-card {
+    padding: 1.75rem 1.25rem;
   }
 
-  &::before {
-    left: 0;
-    border-left-color: var(--border);
-  }
-  &::after {
-    right: 0;
-    border-right-color: var(--border);
+  .upload-gate-card .header-title h1 {
+    font-size: 1.25rem;
   }
 }

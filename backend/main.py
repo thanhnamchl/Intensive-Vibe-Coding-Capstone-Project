@@ -5,6 +5,7 @@ Pydantic field validation, request-size guard, structured error responses.
 All configuration is read from environment variables — no secrets in code.
 """
 import os
+import tempfile
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,7 +20,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 from agent_adk import AgentOrchestrator
-from mcp_server import mcp, get_scenarios
+from mcp_server import mcp, get_scenarios, upload_simulation_csv, get_data_status, get_sample_csv
 
 # ── Configuration from environment ───────────────────────────────────────────
 _raw_origins = os.getenv(
@@ -30,6 +31,17 @@ ALLOWED_ORIGINS: list[str] = [o.strip() for o in _raw_origins.split(",") if o.st
 
 MAX_UPLOAD_BYTES: int = int(os.getenv("MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
 RATE_LIMIT: str = os.getenv("RATE_LIMIT_PER_MIN", "60") + "/minute"
+
+# Các path KHÔNG bị chặn bởi "chưa có dữ liệu" — phải luôn truy cập được
+# để người dùng có thể upload CSV và kiểm tra trạng thái.
+_DATA_GATE_EXEMPT_PATHS = {
+    "/api/upload",
+    "/api/data-status",
+    "/api/sample-csv",
+    "/docs",
+    "/openapi.json",
+    "/redoc",
+}
 
 # ── Rate limiter ──────────────────────────────────────────────────────────────
 limiter = Limiter(key_func=get_remote_address, default_limits=[RATE_LIMIT])
@@ -69,6 +81,30 @@ async def add_security_headers(request: Request, call_next):
         "style-src 'self' 'unsafe-inline'"
     )
     return response
+
+# ── Data-gate middleware ──────────────────────────────────────────────────────
+# Chặn mọi endpoint /api/* (trừ upload/data-status) cho tới khi có CSV hợp lệ
+# đã được nạp vào mcp_server. Buộc frontend phải đưa người dùng qua màn hình
+# upload trước khi vào được dashboard.
+@app.middleware("http")
+async def require_data_loaded(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in _DATA_GATE_EXEMPT_PATHS:
+        status = get_data_status()
+        if not status.get("data_loaded"):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "success": False,
+                    "code": "NO_DATA_LOADED",
+                    "message": (
+                        "Chưa có dữ liệu mô phỏng nào được nạp. "
+                        "Vui lòng upload file CSV đúng template qua /api/upload trước."
+                    ),
+                    "required_columns": status.get("required_columns", []),
+                },
+            )
+    return await call_next(request)
 
 # ── Global error handler ──────────────────────────────────────────────────────
 @app.exception_handler(Exception)
@@ -270,6 +306,95 @@ def _validate_awd(awd: str) -> None:
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
+
+# 0a. Data status — dashboard gọi tool này để quyết định có cho vào hay bắt upload
+@app.get("/api/data-status")
+@limiter.limit(RATE_LIMIT)
+def api_get_data_status(request: Request):
+    """
+    Trả về trạng thái dữ liệu hiện tại: đã có CSV hợp lệ chưa, model đã
+    sẵn sàng chưa, và danh sách cột bắt buộc theo template. Frontend nên
+    gọi endpoint này ngay khi load app để quyết định hiện dashboard hay
+    màn hình upload.
+    """
+    try:
+        return get_data_status()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to retrieve data status.")
+
+
+# 0a-bis. Tải file CSV mẫu đúng template
+@app.get("/api/sample-csv")
+@limiter.limit(RATE_LIMIT)
+def api_download_sample_csv(request: Request):
+    """
+    Trả về 1 file CSV mẫu đúng template (đủ cột bắt buộc, kèm vài dòng ví dụ)
+    để người dùng tải về, điền dữ liệu thật rồi upload lại. Endpoint này
+    KHÔNG bị chặn bởi data-gate vì cần dùng được ngay cả khi chưa có dữ liệu.
+    """
+    try:
+        csv_text = get_sample_csv()
+    except Exception:
+        raise HTTPException(status_code=500, detail="Không tạo được file CSV mẫu.")
+
+    from fastapi.responses import Response
+    return Response(
+        content=csv_text,
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=star_farm_template.csv"},
+    )
+
+
+# 0b. Upload CSV — bắt buộc phải gọi thành công trước khi dùng các endpoint khác
+@app.post("/api/upload")
+@limiter.limit(RATE_LIMIT)
+async def api_upload_csv(request: Request, file: UploadFile = File(...)):
+    """
+    Upload file CSV mô phỏng nông nghiệp. File sẽ được validate đúng
+    template (đủ cột, đúng kiểu dữ liệu, đủ số dòng) trước khi được nạp
+    và dùng để train model. Cho tới khi upload thành công, mọi endpoint
+    /api/* khác đều trả về 409.
+    """
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(status_code=400, detail="Chỉ chấp nhận file .csv")
+
+    contents = await file.read()
+    if len(contents) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File vượt quá giới hạn {MAX_UPLOAD_BYTES} bytes.",
+        )
+    if len(contents) == 0:
+        raise HTTPException(status_code=400, detail="File rỗng.")
+
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            tmp.write(contents)
+            tmp_path = tmp.name
+
+        result = upload_simulation_csv(tmp_path)
+
+        if result.get("status") == "success":
+            return {"success": True, **result}
+
+        # invalid_template hoặc error → trả về lỗi rõ ràng cho FE hiển thị
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": result.get("message", "Upload thất bại."),
+                "errors": result.get("errors", []),
+                "required_columns": result.get("required_columns", []),
+            },
+        )
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Xử lý file upload thất bại.")
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
 
 # 1. Scenarios listing
 @app.get("/api/scenarios")
