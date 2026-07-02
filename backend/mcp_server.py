@@ -255,7 +255,7 @@ print("[mcp_server] Chưa có dữ liệu. Chờ người dùng upload_simulatio
 
 # ── Sinh file CSV mẫu để người dùng tải về, điền dữ liệu thật rồi upload lại ──
 
-def build_sample_csv_text(n_rows: int = 6) -> str:
+def build_sample_csv_text(n_rows: int = 12) -> str:
     """
     Sinh 1 chuỗi CSV đúng template (đủ REQUIRED_COLUMNS) kèm vài dòng ví dụ
     với giá trị hợp lý trong khoảng agronomically-valid, để người dùng có

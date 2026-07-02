@@ -72,25 +72,25 @@ DEFAULT_METRICS = [
 
 # Human-friendly display labels  (column → (icon, unit))
 METRIC_LABELS = {
-    "Avg Yield":              ("🌾", "t/ha"),
-    "Methane Emissions":      ("💨", "kg CH4/ha"),
-    "Emission Intensity":     ("💨", "kg CH4/t Rice"),
-    "Profit Margin":          ("📈", "%"),
-    "Net Income":             ("💰", "$/ha"),
-    "Production Cost":        ("💸", "$/ha"),
-    "Straw Value":            ("🌿", "$/ha"),
-    "Water Usage":            ("💧", "mm/ha"),
-    "Fertilizer Usage":       ("🧪", "kg NH4/ha"),
-    "Pesticide Usage":        ("🧴", "kg/ha"),
-    "Salinity Exposure":      ("🧂", "ppt"),
-    "Max Flood Continuous":   ("🌊", "days"),
-    "Flood Stress":           ("🌊", "index"),
-    "Drought Stress":         ("☀️",  "index"),
-    "Salinity Stress":        ("🧂", "index"),
-    "Biodiversity":           ("🦋", "index"),
-    "Resilient Varieties":    ("🌱", "%"),
-    "Water Reliability":      ("💧", "%"),
-    "Labor Intensity":        ("👷", "hours/ha"),
+    "Avg Yield":              ("-", "t/ha"),
+    "Methane Emissions":      ("-", "kg CH4/ha"),
+    "Emission Intensity":     ("-", "kg CH4/t Rice"),
+    "Profit Margin":          ("-", "%"),
+    "Net Income":             ("-", "$/ha"),
+    "Production Cost":        ("-", "$/ha"),
+    "Straw Value":            ("-", "$/ha"),
+    "Water Usage":            ("-", "mm/ha"),
+    "Fertilizer Usage":       ("-", "kg NH4/ha"),
+    "Pesticide Usage":        ("-", "kg/ha"),
+    "Salinity Exposure":      ("-", "ppt"),
+    "Max Flood Continuous":   ("-", "days"),
+    "Flood Stress":           ("-", "index"),
+    "Drought Stress":         ("-",  "index"),
+    "Salinity Stress":        ("-", "index"),
+    "Biodiversity":           ("-", "index"),
+    "Resilient Varieties":    ("-", "%"),
+    "Water Reliability":      ("-", "%"),
+    "Labor Intensity":        ("-", "hours/ha"),
 }
 
 MONTH_MAP = {
@@ -101,43 +101,43 @@ MONTH_MAP = {
 
 # Keys returned by get_aggregated_metrics() → (display label, icon, unit)
 AGG_KEY_LABELS = {
-    "avg_yield":                 ("Avg Yield",            "🌾", "t/ha"),
-    "avg_methane_emissions":     ("Methane Emissions",    "💨", "kg CH4/ha"),
-    "avg_emission_intensity":    ("Emission Intensity",   "💨", "kg CH4/t Rice"),
-    "avg_profit_margin":         ("Profit Margin",        "📈", "%"),
-    "avg_net_income":            ("Net Income",           "💰", "$/ha"),
-    "avg_production_cost":       ("Production Cost",      "💸", "$/ha"),
-    "avg_straw_value":           ("Straw Value",          "🌿", "$/ha"),
-    "avg_water_usage":           ("Water Usage",          "💧", "mm/ha"),
-    "avg_fertilizer_usage":      ("Fertilizer Usage",     "🧪", "kg/ha"),
-    "avg_pesticide_usage":       ("Pesticide Usage",      "🧴", "kg NH4/ha"),
-    "avg_salinity_exposure":     ("Salinity Exposure",    "🧂", "ppt"),
-    "avg_max_flood_continuous":  ("Max Flood Continuous", "🌊", "days"),
-    "avg_flood_stress":          ("Flood Stress",         "🌊", "index"),
-    "avg_drought_stress":        ("Drought Stress",       "☀️",  "index"),
-    "avg_salinity_stress":       ("Salinity Stress",      "🧂", "index"),
-    "avg_biodiversity":          ("Biodiversity",         "🦋", "index"),
-    "avg_resilient_varieties":   ("Resilient Varieties",  "🌱", "%"),
-    "avg_water_reliability":     ("Water Reliability",    "💧", "%"),
-    "avg_labor_intensity":       ("Labor Intensity",      "👷", "hours/ha"),
+    "avg_yield":                 ("Avg Yield",            "-", "t/ha"),
+    "avg_methane_emissions":     ("Methane Emissions",    "-", "kg CH4/ha"),
+    "avg_emission_intensity":    ("Emission Intensity",   "-", "kg CH4/t Rice"),
+    "avg_profit_margin":         ("Profit Margin",        "-", "%"),
+    "avg_net_income":            ("Net Income",           "-", "$/ha"),
+    "avg_production_cost":       ("Production Cost",      "-", "$/ha"),
+    "avg_straw_value":           ("Straw Value",          "-", "$/ha"),
+    "avg_water_usage":           ("Water Usage",          "-", "mm/ha"),
+    "avg_fertilizer_usage":      ("Fertilizer Usage",     "-", "kg/ha"),
+    "avg_pesticide_usage":       ("Pesticide Usage",      "-", "kg NH4/ha"),
+    "avg_salinity_exposure":     ("Salinity Exposure",    "-", "ppt"),
+    "avg_max_flood_continuous":  ("Max Flood Continuous", "-", "days"),
+    "avg_flood_stress":          ("Flood Stress",         "-", "index"),
+    "avg_drought_stress":        ("Drought Stress",       "-",  "index"),
+    "avg_salinity_stress":       ("Salinity Stress",      "-", "index"),
+    "avg_biodiversity":          ("Biodiversity",         "-", "index"),
+    "avg_resilient_varieties":   ("Resilient Varieties",  "-", "%"),
+    "avg_water_reliability":     ("Water Reliability",    "-", "%"),
+    "avg_labor_intensity":       ("Labor Intensity",      "-", "hours/ha"),
 }
 
 # Keys returned by run_agricultural_simulation() → predictions dict
 PRED_KEY_LABELS = {
-    "Avg Yield":              ("🌾", "t/ha",          ".2f"),
-    "Methane Emissions":      ("💨", "kg/ha",         ".1f"),
-    "Emission Intensity":     ("💨", "kg CO₂e/t",    ".2f"),
-    "Profit Margin":          ("📈", "%",              ".1f"),
-    "Net Income":             ("💰", "$/ha",           ",.0f"),
-    "Production Cost":        ("💸", "$/ha",           ",.0f"),
-    "Straw Value":            ("🌿", "$/ha",           ",.0f"),
-    "Water Reliability":      ("💧", "%",              ".1f"),
-    "Biodiversity":           ("🦋", "index",          ".3f"),
-    "Resilient Varieties":    ("🌱", "%",              ".1f"),
-    "Labor Intensity":        ("👷", "hours/ha", ".1f"),
-    "Flood Stress":           ("🌊", "index",          ".3f"),
-    "Drought Stress":         ("☀️",  "index",          ".3f"),
-    "Salinity Stress":        ("🧂", "index",          ".3f"),
+    "Avg Yield":              ("-", "t/ha",          ".2f"),
+    "Methane Emissions":      ("-", "kg/ha",         ".1f"),
+    "Emission Intensity":     ("-", "kg CO₂e/t",    ".2f"),
+    "Profit Margin":          ("-", "%",              ".1f"),
+    "Net Income":             ("-", "$/ha",           ",.0f"),
+    "Production Cost":        ("-", "$/ha",           ",.0f"),
+    "Straw Value":            ("-", "$/ha",           ",.0f"),
+    "Water Reliability":      ("-", "%",              ".1f"),
+    "Biodiversity":           ("-", "index",          ".3f"),
+    "Resilient Varieties":    ("-", "%",              ".1f"),
+    "Labor Intensity":        ("-", "hours/ha", ".1f"),
+    "Flood Stress":           ("-", "index",          ".3f"),
+    "Drought Stress":         ("-",  "index",          ".3f"),
+    "Salinity Stress":        ("-", "index",          ".3f"),
 }
 
 
@@ -256,12 +256,13 @@ class AggregationAgent(Agent):
         current_data = mcp_server.data
         if current_data is None or current_data.empty:
             return summary
-
         # ── Structured Compare X by Y path ───────────────────────────────────
         if dimension:
             temp_col = None
             if dimension not in current_data.columns:
                 if dimension == "Year" and "datetime" in current_data.columns:
+                    # FIX: Create a copy to prevent parallel requests from modifying the shared global dataset
+                    current_data = current_data.copy()
                     current_data["Year"] = current_data["datetime"].dt.year.dropna().astype(int).astype(str)
                     temp_col = "Year"
                 else:
@@ -281,7 +282,7 @@ class AggregationAgent(Agent):
             if not cols_to_group:
                 summary["compare_error"] = "None of the requested metric columns exist in the dataset."
                 if temp_col:
-                    current_data.drop(columns=[temp_col], inplace=True)
+                    current_data.drop(columns=[temp_col], inplace=True, errors='ignore')
                 return summary
 
             if filtered_data.empty:
@@ -298,7 +299,8 @@ class AggregationAgent(Agent):
             summary["compare_breakdown"] = breakdown
 
             if temp_col:
-                current_data.drop(columns=[temp_col], inplace=True)
+                # FIX: Add errors='ignore' to be absolutely robust
+                current_data.drop(columns=[temp_col], inplace=True, errors='ignore')
             return summary
 
         # ── Legacy keyword-based breakdown (backward-compatible) ─────────────

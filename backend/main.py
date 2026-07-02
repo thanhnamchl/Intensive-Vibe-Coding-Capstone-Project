@@ -7,7 +7,6 @@ All configuration is read from environment variables — no secrets in code.
 import os
 import tempfile
 from dotenv import load_dotenv
-
 load_dotenv()
 
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
@@ -436,33 +435,28 @@ def api_get_metrics(request: Request, req: FilterRequest):
 def api_compare(request: Request, req: CompareRequest):
     """
     Compare one or more metrics grouped by a dimension.
-    
-    Example request body:
-    ```json
-    {
-      "metrics": ["Avg Yield", "Methane Emissions", "Water Reliability"],
-      "dimension": "Climate Type",
-      "filters": {}
-    }
-    ```
-    Leave `metrics` empty to use the default metric set.
     """
+    # 1. Kiểm tra tính hợp lệ của tham số đầu vào
     _validate_dimension(req.dimension)
-    if req.metrics:
-        _validate_metrics(req.metrics)
+    
+    resolved_metrics = req.metrics if req.metrics else ["Avg Yield", "Methane Emissions", "Profit Margin", "Net Income"]
+    _validate_metrics(resolved_metrics)
 
+    # 2. Xây dựng truy vấn và thực thi thông qua orchestrator
     try:
-        query = f"Compare {' and '.join(req.metrics) if req.metrics else 'all'} by {req.dimension}"
+        query = f"Compare {' and '.join(resolved_metrics)} by {req.dimension}"
         result = orchestrator.process_query(
             query,
             context={"filters": req.filters},
         )
         return result
-    except HTTPException:
-        raise
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception:
-        raise HTTPException(status_code=500, detail="Comparison failed.")
-
+        raise HTTPException(
+            status_code=500, 
+            detail="Comparison failed."
+        )
 
 # 4. Simulate
 @app.post("/api/simulate")

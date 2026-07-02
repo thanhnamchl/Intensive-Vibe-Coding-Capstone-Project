@@ -1,46 +1,185 @@
 /* ═══════════════════════════════════════════════════════════════════════
-   Upload Gate — màn hình bắt buộc upload CSV trước khi vào dashboard
-   Nối tiếp file style chính, dùng lại đúng biến --panel-bg / --primary /
-   --danger / --text-muted... đã khai báo ở :root
+   STAR-FARM Core & Upload Gate Styles
    ═══════════════════════════════════════════════════════════════════════ */
 
+/* Error Boundary UI */
+.error-boundary-container {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #0b1510;
+  color: #f0fdf4;
+  padding: 2rem;
+  text-align: center;
+}
+
+.error-boundary-title {
+  color: #ef4444;
+  margin-bottom: 1rem;
+}
+
+.error-boundary-msg {
+  color: #9ca3af;
+  margin-bottom: 1.5rem;
+  max-width: 480px;
+}
+
+.error-boundary-btn {
+  padding: 0.6rem 1.4rem;
+  border-radius: 0.5rem;
+  background: #22c55e;
+  color: #000;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* Upload Gate Container */
 .upload-gate-container {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 2rem;
+  background: var(--bg-gradient);
 }
 
 .upload-gate-card {
   width: 100%;
-  max-width: 560px;
+  max-width: 600px;
   background: var(--panel-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--panel-border);
-  border-radius: 1rem;
+  border-radius: 1.25rem;
   padding: 2.5rem;
   box-shadow: var(--glass-shadow);
-  text-align: center;
 }
 
-.upload-gate-card .header-title h1 {
+/* Hero Badge Icon */
+.upload-gate-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 1.25rem;
+  background: linear-gradient(135deg, rgba(34, 197, 94, 0.18), rgba(16, 185, 129, 0.08));
+  border: 1px solid var(--panel-border);
+  color: var(--primary);
+  box-shadow: 0 0 24px rgba(34, 197, 94, 0.15);
+}
+
+.upload-gate-header {
+  text-align: center;
+  margin-bottom: 2rem;
+}
+
+.upload-gate-header h1 {
+  font-size: 1.5rem;
+  font-weight: 800;
   background: linear-gradient(to right, #4ade80, #10b981, #06b6d4);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   margin-bottom: 0.5rem;
 }
 
-.upload-gate-card .header-title p {
+.upload-gate-header p {
   color: var(--text-muted);
   font-size: 0.9rem;
+  max-width: 440px;
+  margin: 0 auto;
 }
 
-/* Dropzone — kế thừa look của .upload-area đã có, thêm trạng thái active/uploading */
+/* Steps Section */
+.upload-step {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  padding: 1.25rem 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.upload-step:first-of-type {
+  border-top: none;
+  padding-top: 0;
+}
+
+.upload-step-icon {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid var(--panel-border);
+  color: var(--primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.upload-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.upload-step-body h3 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.upload-step-body>p {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  margin-bottom: 0.75rem;
+  line-height: 1.5;
+}
+
+/* Dynamic Buttons overrides */
+.btn-outline {
+  background: transparent;
+  color: var(--primary);
+  border: 1px solid var(--panel-border);
+  box-shadow: none;
+}
+
+.btn-outline:hover {
+  background: rgba(34, 197, 94, 0.08);
+  border-color: var(--primary);
+  box-shadow: none;
+  transform: none;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-weight: 500;
+}
+
+.btn-ghost:hover {
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-primary);
+  box-shadow: none;
+  transform: none;
+}
+
+.upload-sample-btn {
+  font-size: 0.85rem;
+  padding: 0.55rem 1rem;
+}
+
+/* Dropzone styling */
 .upload-dropzone {
   border: 2px dashed var(--panel-border);
-  padding: 2.5rem 1.5rem;
+  padding: 2rem 1.5rem;
   border-radius: 0.75rem;
   text-align: center;
   cursor: pointer;
@@ -49,7 +188,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  color: var(--text-primary);
+  color: var(--primary);
 }
 
 .upload-dropzone:hover {
@@ -63,11 +202,25 @@
   box-shadow: 0 0 0 3px var(--primary-glow);
 }
 
-.upload-dropzone svg {
-  color: var(--primary);
+.upload-dropzone.busy {
+  cursor: default;
+  border-style: solid;
 }
 
-/* Error box khi validate CSV thất bại */
+.upload-dropzone-title {
+  margin-top: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.upload-dropzone-subtitle {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 0.25rem;
+}
+
+/* Error feedback box */
 .upload-error-box {
   margin-top: 1.25rem;
   text-align: left;
@@ -78,16 +231,27 @@
   color: #fca5a5;
 }
 
-.upload-error-box ul {
-  list-style: disc;
-  color: #fca5a5;
+.upload-error-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  font-size: 0.85rem;
 }
 
-.upload-error-box li {
+.upload-error-list {
+  list-style: disc;
+  color: #fca5a5;
+  margin-top: 0.5rem;
+  padding-left: 1.2rem;
+  font-size: 0.8rem;
+}
+
+.upload-error-list li {
   margin-bottom: 0.2rem;
 }
 
-/* Danh sách cột bắt buộc (collapsible) */
+/* Template column constraints */
 .upload-columns-details {
   margin-top: 1.25rem;
   text-align: left;
@@ -102,6 +266,7 @@
   list-style: none;
   display: flex;
   align-items: center;
+  gap: 0.4rem;
   user-select: none;
 }
 
@@ -128,154 +293,408 @@
   font-size: 0.75rem;
 }
 
-/* Responsive */
-@media (max-width: 640px) {
-  .upload-gate-card {
-    padding: 1.75rem 1.25rem;
-  }
-
-  .upload-gate-card .header-title h1 {
-    font-size: 1.25rem;
-  }
+/* Scanning loading states */
+.upload-gate-scan {
+  text-align: center;
+  padding: 3rem 2.5rem;
 }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Upload Gate — màn hình bắt buộc upload CSV trước khi vào dashboard
-   Nối tiếp file style chính, dùng lại đúng biến --panel-bg / --primary /
-   --danger / --text-muted... đã khai báo ở :root
-   ═══════════════════════════════════════════════════════════════════════ */
-
-.upload-gate-container {
-  min-height: 100vh;
+.upload-scan-orb {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2rem;
-}
-
-.upload-gate-card {
-  width: 100%;
-  max-width: 560px;
-  background: var(--panel-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  margin: 0 auto 1.5rem;
+  background: rgba(34, 197, 94, 0.1);
   border: 1px solid var(--panel-border);
-  border-radius: 1rem;
-  padding: 2.5rem;
-  box-shadow: var(--glass-shadow);
-  text-align: center;
+  color: var(--primary);
+  box-shadow: 0 0 32px rgba(34, 197, 94, 0.2);
 }
 
-.upload-gate-card .header-title h1 {
-  background: linear-gradient(to right, #4ade80, #10b981, #06b6d4);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  margin-bottom: 0.5rem;
+.upload-scan-text {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 1rem;
+  margin-bottom: 0.4rem;
 }
 
-.upload-gate-card .header-title p {
+.upload-scan-subtext {
   color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* Dashboard UI helpers */
+.btn-quit {
+  padding: 0.4rem 1rem;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #ef4444;
+}
+
+.btn-quit:hover {
+  background: rgba(239, 68, 68, 0.1) !important;
+  border-color: #ef4444 !important;
+  color: #ef4444 !important;
+}
+
+.filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1rem;
+  margin-top: 0.5rem;
+}
+
+.filter-label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+
+.empty-warning-banner {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid #ef4444;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  margin: 1rem 0;
+  color: #fca5a5;
   font-size: 0.9rem;
 }
 
-/* Dropzone — kế thừa look của .upload-area đã có, thêm trạng thái active/uploading */
-.upload-dropzone {
-  border: 2px dashed var(--panel-border);
-  padding: 2.5rem 1.5rem;
-  border-radius: 0.75rem;
-  text-align: center;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  background: rgba(34, 197, 94, 0.02);
+.text-danger {
+  color: #ef4444 !important;
+}
+
+.text-success {
+  color: #10b981 !important;
+}
+
+.chart-container-height {
+  height: 280px;
+  margin-top: 1rem;
+}
+
+.centered-fallback {
   display: flex;
-  flex-direction: column;
+  justify-content: center;
   align-items: center;
-  color: var(--text-primary);
-}
-
-.upload-dropzone:hover {
-  border-color: var(--primary);
-  background: rgba(34, 197, 94, 0.05);
-}
-
-.upload-dropzone.active {
-  border-color: var(--primary);
-  background: rgba(34, 197, 94, 0.08);
-  box-shadow: 0 0 0 3px var(--primary-glow);
-}
-
-.upload-dropzone svg {
-  color: var(--primary);
-}
-
-/* Error box khi validate CSV thất bại */
-.upload-error-box {
-  margin-top: 1.25rem;
-  text-align: left;
-  background: rgba(239, 68, 68, 0.08);
-  border: 1px solid var(--danger);
-  border-radius: 0.5rem;
-  padding: 0.875rem 1rem;
-  color: #fca5a5;
-}
-
-.upload-error-box ul {
-  list-style: disc;
-  color: #fca5a5;
-}
-
-.upload-error-box li {
-  margin-bottom: 0.2rem;
-}
-
-/* Danh sách cột bắt buộc (collapsible) */
-.upload-columns-details {
-  margin-top: 1.25rem;
-  text-align: left;
+  height: 100%;
   color: var(--text-muted);
+}
+
+.optimizer-desc {
   font-size: 0.85rem;
+  color: var(--text-muted);
+  margin-bottom: 1rem;
 }
 
-.upload-columns-details summary {
-  cursor: pointer;
-  color: var(--secondary);
-  font-weight: 500;
-  list-style: none;
+.optimizer-form-row {
   display: flex;
-  align-items: center;
-  user-select: none;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
 }
 
-.upload-columns-details summary::-webkit-details-marker {
-  display: none;
+.optimizer-error-msg {
+  margin-top: 0.4rem;
+  margin-bottom: 0;
+  color: #f87171;
+  font-size: 0.78rem;
+  line-height: 1.35;
 }
 
-.upload-columns-details[open] summary {
+.optimizer-results-box {
+  font-size: 0.85rem;
+  background: rgba(0, 0, 0, 0.2);
+  padding: 1rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.results-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
 
-.upload-columns-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem;
+.results-grid-small {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+  font-size: 0.85rem;
 }
 
-.upload-column-chip {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--text-primary);
-  padding: 0.25rem 0.6rem;
-  border-radius: 9999px;
+.simulation-estimates-box {
+  margin-top: 0.5rem;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  borderRadius: 0.5rem;
+}
+
+.agent-data-pre {
   font-size: 0.75rem;
+  margin-top: 0.5rem;
+  background: #000;
+  padding: 0.5rem;
+  border-radius: 4px;
+  overflow-x: auto;
 }
 
-/* Responsive */
+/* Trends Section Specific Styles */
+.trends-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.trends-desc {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.metric-toggle {
+  display: flex;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.25rem;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.line-chart-container {
+  height: 360px;
+  width: 100%;
+}
+
 @media (max-width: 640px) {
   .upload-gate-card {
     padding: 1.75rem 1.25rem;
   }
 
-  .upload-gate-card .header-title h1 {
+  .upload-gate-header h1 {
     font-size: 1.25rem;
+  }
+
+  .upload-step {
+    gap: 0.75rem;
+  }
+
+  .filter-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Custom Styles Overrides for chat suggestions, guide, and language settings */
+
+.chat-messages {
+  height: 380px !important;
+  max-height: 380px !important;
+  overflow-y: auto !important;
+  padding-right: 8px;
+}
+
+.chat-messages::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chat-messages::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+/* Suggested Queries Strip Styling */
+.chat-suggestions {
+  display: flex;
+  flex-direction: column;
+  /* Hiển thị xếp thành 1 cột */
+  gap: 0.5rem;
+  padding: 6px 4px 6px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 8px;
+  max-height: 180px;
+  /* Giới hạn chiều cao để kích hoạt cuộn dọc */
+  overflow-y: auto;
+  /* Cho phép cuộn dọc */
+  overflow-x: hidden;
+  /* Cấm cuộn ngang hoàn toàn */
+}
+
+/* Định dạng thanh cuộn dọc cho khung gợi ý */
+.chat-suggestions::-webkit-scrollbar {
+  width: 5px;
+}
+
+.chat-suggestions::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+.chat-suggestions::-webkit-scrollbar {
+  height: 4px;
+}
+
+.chat-suggestions::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.15);
+  border-radius: 2px;
+}
+
+.suggestion-chip {
+  display: block;
+  width: 100% !important;
+  /* Chiếm 100% chiều rộng khung */
+  white-space: normal !important;
+  /* Tự động xuống dòng khi chữ dài */
+  word-wrap: break-word;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #e5e7eb;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.74rem;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  height: auto !important;
+}
+
+.suggestion-chip:hover {
+  background: rgba(34, 197, 94, 0.06);
+  border-color: #22c55e;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.08);
+}
+
+.suggestion-chip .category {
+  font-weight: 700;
+  color: #22c55e;
+  margin-right: 6px;
+  font-size: 0.7rem;
+}
+
+.chat-suggestions-title {
+  font-size: 0.74rem;
+  color: #9ca3af;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+/* Interactive Query Guide Panels */
+.query-guide-panel {
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0.8rem;
+  border-radius: 6px;
+  margin-bottom: 0.8rem;
+  font-size: 0.78rem;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.query-guide-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+@media (max-width: 900px) {
+  .suggestion-chip {
+    width: 100%;
+    /* Chuyển thành 1 cột trên màn hình nhỏ */
+  }
+}
+
+.suggestion-chip:hover {
+  background: rgba(34, 197, 94, 0.06);
+  border-color: #22c55e;
+  box-shadow: 0 2px 8px rgba(34, 197, 94, 0.08);
+}
+
+.suggestion-chip .category {
+  font-weight: 700;
+  color: #22c55e;
+  margin-right: 6px;
+  font-size: 0.7rem;
+}
+
+.chat-suggestions-title {
+  font-size: 0.74rem;
+  color: #9ca3af;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+
+.query-guide-item {
+  border-left: 2px solid #22c55e;
+  padding-left: 0.5rem;
+}
+
+.query-guide-syntax {
+  color: #9ca3af;
+  font-family: monospace;
+  font-size: 0.72rem;
+  margin: 2px 0;
+}
+
+.query-guide-example {
+  color: #22c55e;
+  font-size: 0.72rem;
+  cursor: pointer;
+  text-decoration: underline;
+  background: rgba(34, 197, 94, 0.05);
+  padding: 1px 4px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.query-guide-example:hover {
+  background: rgba(34, 197, 94, 0.18);
+}
+
+/* Language Switch Styling */
+.lang-toggle-container {
+  display: flex;
+  gap: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  padding: 3px;
+  border-radius: 6px;
+}
+
+.lang-toggle-btn {
+  background: transparent;
+  border: none;
+  color: #9ca3af;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.lang-toggle-btn.active {
+  background: #22c55e;
+  color: #0b1510;
+}
+
+/* Retro text rotating animation */
+.spinner-text {
+  display: inline-block;
+  animation: spin-text-anim 1.5s linear infinite;
+}
+
+@keyframes spin-text-anim {
+  0% {
+    transform: rotate(0deg);
+  }
+
+  100% {
+    transform: rotate(360deg);
   }
 }
